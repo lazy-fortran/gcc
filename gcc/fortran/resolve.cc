@@ -12977,6 +12977,7 @@ resolve_ordinary_assign (gfc_code *code, gfc_namespace *ns)
   if (gfc_extend_assign (code, ns))
     {
       gfc_expr** rhsptr;
+      gfc_expr* rhs;
 
       if (code->op == EXEC_ASSIGN_CALL)
 	{

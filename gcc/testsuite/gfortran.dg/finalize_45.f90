@@ -122,9 +122,7 @@ contains
 
    call foo%clean()
 
-! NAGFOR has assoc_counts =2, which is probably correct. If nullification
-! of the pointer component is not done in gfortran, function finalization
-! results in a double free. TODO fix this.
+! Function result finalization per Fortran 2018 Section 7.5.6.3.
    if (final_counts /= 2) stop 3
    if (assoc_counts /= 2) stop 4
    end

@@ -6883,6 +6883,7 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
   bool is_builtin;
   bool callee_alloc;
   bool ulim_copy;
+  bool finalized_function_actual = false;
   gfc_typespec ts;
   gfc_charlen cl;
   gfc_expr *e;
@@ -7587,42 +7588,42 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
 		      gfc_add_block_to_block (&parmse.post, &class_se.post);
 		    }
 
-		  if (fsym && (fsym->ts.type == BT_DERIVED
-			       || fsym->ts.type == BT_ASSUMED)
-		      && e->ts.type == BT_CLASS
-		      && !CLASS_DATA (e)->attr.dimension
-		      && !CLASS_DATA (e)->attr.codimension)
-		    {
-		      parmse.expr = gfc_class_data_get (parmse.expr);
-		      /* The result is a class temporary, whose _data component
-			 must be freed to avoid a memory leak.  */
-		      if (e->expr_type == EXPR_FUNCTION
-			  && CLASS_DATA (e)->attr.allocatable)
-			{
-			  tree zero;
+          if (fsym && (fsym->ts.type == BT_DERIVED
+                       || fsym->ts.type == BT_ASSUMED)
+              && e->ts.type == BT_CLASS
+              && !CLASS_DATA (e)->attr.dimension
+              && !CLASS_DATA (e)->attr.codimension)
+            {
+              parmse.expr = gfc_class_data_get (parmse.expr);
+              /* The result is a class temporary, whose _data component
+                 must be freed to avoid a memory leak.  */
+              if (e->expr_type == EXPR_FUNCTION
+                  && CLASS_DATA (e)->attr.allocatable)
+                {
+                  tree zero;
 
-			  /* Finalize the expression.  */
-			  gfc_finalize_tree_expr (&parmse, NULL,
-						  gfc_expr_attr (e), e->rank);
-			  gfc_add_block_to_block (&parmse.post,
-						  &parmse.finalblock);
+                  /* Finalize the expression.  */
+                  gfc_finalize_tree_expr (&parmse, NULL,
+                                          gfc_expr_attr (e), e->rank);
+                  gfc_add_block_to_block (&parmse.post,
+                                          &parmse.finalblock);
 
-			  /* Then free the class _data.  */
-			  zero = build_int_cst (TREE_TYPE (parmse.expr), 0);
-			  tmp = fold_build2_loc (input_location, NE_EXPR,
-						 logical_type_node,
-						 parmse.expr, zero);
-			  tmp = build3_v (COND_EXPR, tmp,
-					  gfc_call_free (parmse.expr),
-					  build_empty_stmt (input_location));
-			  gfc_add_expr_to_block (&parmse.post, tmp);
-			  gfc_add_modify (&parmse.post, parmse.expr, zero);
-			}
-		    }
+                  /* Then free the class _data.  */
+                  zero = build_int_cst (TREE_TYPE (parmse.expr), 0);
+                  tmp = fold_build2_loc (input_location, NE_EXPR,
+                                         logical_type_node,
+                                         parmse.expr, zero);
+                  tmp = build3_v (COND_EXPR, tmp,
+                                  gfc_call_free (parmse.expr),
+                                  build_empty_stmt (input_location));
+                  gfc_add_expr_to_block (&parmse.post, tmp);
+                  gfc_add_modify (&parmse.post, parmse.expr, zero);
+                }
+            }
 
-		  /* Wrap scalar variable in a descriptor. We need to convert
-		     the address of a pointer back to the pointer itself before,
-		     we can assign it to the data field.  */
+ 	  /* Wrap scalar variable in a descriptor. We need to convert
+ 	     the address of a pointer back to the pointer itself before,
+ 	     we can assign it to the data field.  */
 
 		  if (fsym && fsym->as && fsym->as->type == AS_ASSUMED_RANK
 		      && fsym->ts.type != BT_CLASS && e->expr_type != EXPR_NULL)
@@ -8075,6 +8076,40 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
 
       if (fsym && need_interface_mapping && e)
 	gfc_add_interface_mapping (&mapping, fsym, &parmse, e);
+
+      if (e && e->expr_type == EXPR_FUNCTION
+          && e->ts.type == BT_DERIVED
+          && (!fsym || fsym->ts.type != BT_CLASS)
+          && gfc_may_be_finalized (e->ts))
+        {
+          symbol_attribute result_attr;
+          gfc_symbol *result_sym = NULL;
+
+          if (e->value.function.esym
+              && e->value.function.esym->result)
+            {
+              result_sym = e->value.function.esym->result;
+              result_attr = result_sym->attr;
+            }
+          else
+            result_attr = gfc_expr_attr (e);
+
+          if (!result_attr.pointer)
+            {
+              e->must_finalize = 1;
+              parmse.expr = gfc_evaluate_now (parmse.expr, &parmse.pre);
+              if (TREE_CODE (parmse.expr) == ADDR_EXPR)
+                parmse.expr = build_fold_indirect_ref_loc (input_location,
+                                                          parmse.expr);
+              gfc_finalize_tree_expr (&parmse, e->ts.u.derived,
+                                      result_attr, e->rank);
+              /* Mark as handled to avoid double finalization in outer
+                 expression processing.  */
+              e->must_finalize = 0;
+              finalized = true;
+              finalized_function_actual = true;
+            }
+        }
 
       gfc_add_block_to_block (&se->pre, &parmse.pre);
       gfc_add_block_to_block (&post, &parmse.post);
@@ -8811,7 +8846,8 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
   bool finalizable = der != NULL && der->ns->proc_name
 			    && gfc_is_finalizable (der, NULL);
 
-  if (!byref && finalizable)
+  if (!byref && finalizable
+      && !(expr && expr->must_finalize))
     gfc_finalize_tree_expr (se, der, attr, expr->rank);
 
   if (!byref && sym->ts.type != BT_CHARACTER
@@ -8878,7 +8914,8 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
 	      /* Bundle in the string length.  */
 	      se->string_length = len;
 
-	      if (finalizable)
+	      if (finalizable
+		  && !(expr && expr->must_finalize))
 		gfc_finalize_tree_expr (se, der, attr, expr->rank);
 	    }
 	  else if (ts.type == BT_CHARACTER)
@@ -8984,6 +9021,24 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
 		 || gfc_is_alloc_class_scalar_function (expr))
 		&& attr.pointer))
 	    gfc_finalize_tree_expr (se, NULL, attr, expr->rank);
+	}
+      /* For RHS function actuals marked for deferred finalization in
+         user-defined assignments and intrinsic assignments, finalize after
+         the call returns per ISO/IEC 1539-1:2018 7.5.6.3.  Skip cases already
+         finalized during argument processing.  */
+      else if (expr && expr->expr_type == EXPR_FUNCTION
+	       && expr->ts.type == BT_DERIVED
+	       && expr->must_finalize
+	       && gfc_is_finalizable (expr->ts.u.derived, NULL)
+	       && !finalized_function_actual)
+	{
+	  se->expr = gfc_evaluate_now (se->expr, &se->pre);
+
+	  attr = expr->value.function.esym
+		 ? expr->value.function.esym->result->attr
+		 : expr->symtree->n.sym->attr;
+	  if (!attr.pointer)
+	    gfc_finalize_tree_expr (se, expr->ts.u.derived, attr, expr->rank);
 	}
       gfc_add_block_to_block (&se->post, &post);
     }
@@ -13096,16 +13151,14 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
 	  && (gfc_expr_attr (expr2).pointer
 	      || (expr2->ts.type == BT_CLASS && CLASS_DATA (expr2)->attr.class_pointer)))
 	expr2->must_finalize = 0;
-      /* F2008 4.5.6.3 para 5: If an executable construct references a
-	 structure constructor or array constructor, the entity created by
-	 the constructor is finalized after execution of the innermost
-	 executable construct containing the reference.
-	 These finalizations were later deleted by the Combined Techical
-	 Corrigenda 1 TO 4 for fortran 2008 (f08/0011).  */
+      /* F2008 4.5.6.3 para 5: Structure/array constructor finalization was
+         deleted by f08/0011. For backward compatibility with -std=f2008,
+         continue finalizing constructors unless the corrected behavior is
+         requested via gfc_notification_std(GFC_STD_F2018_DEL).  */
       else if (gfc_notification_std (GFC_STD_F2018_DEL)
-	  && (expr2->expr_type == EXPR_STRUCTURE
-	      || expr2->expr_type == EXPR_ARRAY))
-	expr2->must_finalize = 0;
+          && (expr2->expr_type == EXPR_STRUCTURE
+              || expr2->expr_type == EXPR_ARRAY))
+        expr2->must_finalize = 0;
     }
 
 

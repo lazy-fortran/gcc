@@ -1604,6 +1604,41 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
 }
 
 
+/* Check whether a derived type actually has allocatable components that
+   require deep copying. The attr.alloc_comp attribute can be set even when
+   there are no truly allocatable components (e.g., for types with only
+   non-allocatable components), which can lead to unnecessary tree code
+   generation.  */
+
+static bool
+gfc_derived_needs_copy (gfc_symbol *derived)
+{
+  gfc_component *c;
+
+  if (!derived || !derived->components)
+    return false;
+
+  for (c = derived->components; c; c = c->next)
+    {
+      /* Direct allocatable component.  */
+      if (c->attr.allocatable)
+	return true;
+
+      /* Recursively check derived type components.  */
+      if (c->ts.type == BT_DERIVED
+	  && gfc_derived_needs_copy (c->ts.u.derived))
+	return true;
+
+      /* Class components with allocatable data.  */
+      if (c->ts.type == BT_CLASS
+	  && CLASS_DATA (c)->attr.allocatable)
+	return true;
+    }
+
+  return false;
+}
+
+
 /* Finalize a TREE expression using the finalizer wrapper. The result is
    fixed in order to prevent repeated calls.  */
 
@@ -1618,6 +1653,21 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
   bool is_class = GFC_CLASS_TYPE_P (TREE_TYPE (se->expr));
 
   if (attr.pointer)
+    return;
+
+  /* Skip finalization for unevaluated function/constructor call results when
+     the type doesn't actually need deep copy despite having alloc_comp set.
+
+     When se->expr is a CALL_EXPR at this point, it represents an unevaluated
+     constructor or function result. For types with transitive alloc_comp but
+     no actual allocatable components, attempting to finalize causes ICEs during
+     gimplification.
+
+     Types with actual allocatable components need finalization even for
+     CALL_EXPR to handle cases like: obj = func_returning_allocatable_type()
+     PR121472  */
+  if (se->expr && TREE_CODE (se->expr) == CALL_EXPR
+      && derived && !gfc_derived_needs_copy (derived))
     return;
 
   /* Derived type function results with components that have defined
@@ -1659,7 +1709,7 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
       else if (se->direct_byref)
 	{
 	  desc = gfc_evaluate_now (se->expr, &se->finalblock);
-	  if (derived->attr.alloc_comp)
+	  if (derived->attr.alloc_comp && gfc_derived_needs_copy (derived))
 	    {
 	      /* Need to copy allocated components and not finalize.  */
 	      tmp = gfc_copy_alloc_comp_no_fini (derived, se->expr, desc, rank, 0);
@@ -1670,7 +1720,7 @@ gfc_finalize_tree_expr (gfc_se *se, gfc_symbol *derived,
 	{
 	  desc = gfc_evaluate_now (se->expr, &se->pre);
 	  se->expr = gfc_evaluate_now (desc, &se->pre);
-	  if (derived->attr.alloc_comp)
+	  if (derived->attr.alloc_comp && gfc_derived_needs_copy (derived))
 	    {
 	      /* Need to copy allocated components and not finalize.  */
 	      tmp = gfc_copy_alloc_comp_no_fini (derived, se->expr, desc, rank, 0);
