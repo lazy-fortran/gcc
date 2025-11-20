@@ -13542,10 +13542,11 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
   gfc_add_expr_to_block (&body, tmp);
 
   /* Add the post blocks to the body.  Scalar finalization must appear before
-     the post block in case any dellocations are done.  */
+     the post block in case any dellocations are done.  For function
+     expressions (including elemental), always add finalblock to ensure
+     function results are finalized per F2018 7.5.6.3.  */
   if (rse.finalblock.head
-      && (!l_is_temp || (expr2->expr_type == EXPR_FUNCTION
-			 && gfc_expr_attr (expr2).elemental)))
+      && (!l_is_temp || expr2->expr_type == EXPR_FUNCTION))
     {
       gfc_add_block_to_block (&body, &rse.finalblock);
       gfc_add_block_to_block (&body, &rse.post);

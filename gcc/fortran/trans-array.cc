@@ -1797,6 +1797,46 @@ gfc_trans_create_temp_array (stmtblock_t * pre, stmtblock_t * post, gfc_ss * ss,
   gfc_trans_allocate_array_storage (pre, post, info, size, nelem, initial,
 				    dynamic, dealloc);
 
+  /* Finalize temporary arrays created for function results (GFC_SS_FUNCTION).
+     These hold the return values of array-valued or elemental functions and
+     must be finalized after use per F2018 7.5.6.3.  GFC_SS_TEMP (dependency-
+     breaking temps) are not finalized here.  */
+  if (dealloc && ss->info && ss->info->type == GFC_SS_FUNCTION
+      && ss->info->expr
+      && (ss->info->expr->ts.type == BT_DERIVED
+	  || ss->info->expr->ts.type == BT_CLASS)
+      && gfc_may_be_finalized (ss->info->expr->ts))
+    {
+      gfc_se fin_se;
+      stmtblock_t fin_block;
+      symbol_attribute attr;
+      gfc_symbol *derived = NULL;
+
+      gfc_init_block (&fin_block);
+      gfc_init_se (&fin_se, NULL);
+      fin_se.expr = desc;
+
+      attr = gfc_expr_attr (ss->info->expr);
+      attr.pointer = 0;
+      attr.allocatable = 0;
+
+      if (ss->info->expr->ts.type == BT_DERIVED)
+	derived = ss->info->expr->ts.u.derived;
+      else if (ss->info->expr->ts.type == BT_CLASS)
+	derived = CLASS_DATA (ss->info->expr)->ts.u.derived;
+
+      if (derived)
+	{
+	  gfc_finalize_tree_expr (&fin_se, derived, attr, ss->dimen);
+	  gfc_add_block_to_block (&fin_block, &fin_se.pre);
+	  gfc_add_block_to_block (&fin_block, &fin_se.finalblock);
+	  gfc_add_block_to_block (&fin_block, &fin_se.post);
+
+	  if (fin_block.head)
+	    gfc_prepend_expr_to_block (post, gfc_finish_block (&fin_block));
+	}
+    }
+
   while (ss->parent)
     ss = ss->parent;
 
