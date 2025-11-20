@@ -13542,41 +13542,7 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
   gfc_add_expr_to_block (&body, tmp);
 
   /* Add the post blocks to the body.  Scalar finalization must appear before
-     the post block in case any dellocations are done.  For scalarized
-     assignments, array temporary finalization is handled in trans-array.cc.
-     TODO: Currently disabled due to ICEs in finalize_38a.  */
-#if 0
-  if (lss == gfc_ss_terminator
-      && (expr2->ts.type == BT_DERIVED || expr2->ts.type == BT_CLASS))
-    {
-      gfc_se fin_se;
-      stmtblock_t fin_block;
-      symbol_attribute attr = gfc_expr_attr (expr2);
-      gfc_symbol *derived = NULL;
-      tree fin_expr;
-
-      gfc_init_block (&fin_block);
-      gfc_init_se (&fin_se, NULL);
-      fin_expr = rse.expr;
-
-      fin_se.expr = fin_expr;
-      attr.pointer = 0;
-      attr.allocatable = 0;
-
-      if (expr2->ts.type == BT_DERIVED)
-	derived = expr2->ts.u.derived;
-      else
-	derived = CLASS_DATA (expr2)->ts.u.derived;
-
-      gfc_finalize_tree_expr (&fin_se, derived, attr, expr2->rank);
-      gfc_add_block_to_block (&fin_block, &fin_se.pre);
-      gfc_add_block_to_block (&fin_block, &fin_se.finalblock);
-      gfc_add_block_to_block (&fin_block, &fin_se.post);
-      if (fin_block.head)
-	gfc_prepend_expr_to_block (&rse.post, gfc_finish_block (&fin_block));
-    }
-#endif
-
+     the post block in case any dellocations are done.  */
   if (rse.finalblock.head
       && (!l_is_temp || (expr2->expr_type == EXPR_FUNCTION
 			 && gfc_expr_attr (expr2).elemental)))
