@@ -13007,6 +13007,31 @@ resolve_ordinary_assign (gfc_code *code, gfc_namespace *ns)
 	    && (lhs->symtree->n.sym == (*rhsptr)->symtree->n.sym))
 	*rhsptr = gfc_get_parentheses (*rhsptr);
 
+      /* For user-defined assignment, if RHS is a function returning a
+	 finalizable non-allocatable, non-pointer derived-type result, mark it
+	 for finalization per F2018 7.5.6.3.  Allocatable or pointer function
+	 results handle their own finalization semantics and must not be
+	 finalized here to avoid double finalization. */
+      if (*rhsptr && (*rhsptr)->expr_type == EXPR_FUNCTION
+	  && gfc_may_be_finalized ((*rhsptr)->ts)
+	  && (*rhsptr)->symtree->n.sym->result)
+	{
+	  bool allocatable_or_pointer = false;
+
+	  if ((*rhsptr)->symtree->n.sym->result->ts.type == BT_CLASS
+	      && CLASS_DATA ((*rhsptr)->symtree->n.sym->result))
+	    allocatable_or_pointer
+	      = (CLASS_DATA ((*rhsptr)->symtree->n.sym->result)->attr.allocatable
+		 || CLASS_DATA ((*rhsptr)->symtree->n.sym->result)->attr.pointer);
+	  else
+	    allocatable_or_pointer
+	      = ((*rhsptr)->symtree->n.sym->result->attr.allocatable
+		 || (*rhsptr)->symtree->n.sym->result->attr.pointer);
+
+	  if (!allocatable_or_pointer)
+	    (*rhsptr)->must_finalize = 1;
+	}
+
       return true;
     }
 
