@@ -1797,12 +1797,17 @@ gfc_trans_create_temp_array (stmtblock_t * pre, stmtblock_t * post, gfc_ss * ss,
   gfc_trans_allocate_array_storage (pre, post, info, size, nelem, initial,
 				    dynamic, dealloc);
 
-  /* Ensure array temporaries of finalizable derived types are finalized
-     before the storage that gfc_trans_allocate_array_storage places in POST
-     is freed.  */
-  if (dealloc && ss->info && ss->info->expr
+  /* TODO: Finalize array temporaries of finalizable derived types.
+     Currently disabled due to ICEs and complex interactions with
+     other parts of the code.  The finalization added in trans-expr.cc
+     for scalar assignments should handle most cases.  */
+#if 0
+  if (dealloc && ss->info && ss->info->type == GFC_SS_TEMP
+      && ss->info->expr
+      && ss->info->expr->expr_type != EXPR_NULL
       && (ss->info->expr->ts.type == BT_DERIVED
-	  || ss->info->expr->ts.type == BT_CLASS))
+	  || ss->info->expr->ts.type == BT_CLASS)
+      && gfc_may_be_finalized (ss->info->expr->ts))
     {
       gfc_se fin_se;
       stmtblock_t fin_block;
@@ -1822,14 +1827,18 @@ gfc_trans_create_temp_array (stmtblock_t * pre, stmtblock_t * post, gfc_ss * ss,
       else if (ss->info->expr->ts.type == BT_CLASS)
 	derived = CLASS_DATA (ss->info->expr)->ts.u.derived;
 
-      gfc_finalize_tree_expr (&fin_se, derived, attr, ss->dimen);
-      gfc_add_block_to_block (&fin_block, &fin_se.pre);
-      gfc_add_block_to_block (&fin_block, &fin_se.finalblock);
-      gfc_add_block_to_block (&fin_block, &fin_se.post);
+      if (derived)
+	{
+	  gfc_finalize_tree_expr (&fin_se, derived, attr, ss->dimen);
+	  gfc_add_block_to_block (&fin_block, &fin_se.pre);
+	  gfc_add_block_to_block (&fin_block, &fin_se.finalblock);
+	  gfc_add_block_to_block (&fin_block, &fin_se.post);
 
-      if (fin_block.head)
-	gfc_prepend_expr_to_block (post, gfc_finish_block (&fin_block));
+	  if (fin_block.head)
+	    gfc_prepend_expr_to_block (post, gfc_finish_block (&fin_block));
+	}
     }
+#endif
 
   while (ss->parent)
     ss = ss->parent;
@@ -5872,6 +5881,10 @@ temporary:
 	base_type = gfc_get_element_type (base_type);
       loop->temp_ss = gfc_get_temp_ss (base_type, dest->info->string_length,
 				       loop->dimen);
+      /* Record the originating expression so temporary arrays created for
+	 dependency breaking are finalized correctly when their storage is
+	 released.  */
+      loop->temp_ss->info->expr = dest_expr;
       gfc_add_ss_to_loop (loop, loop->temp_ss);
     }
   else
