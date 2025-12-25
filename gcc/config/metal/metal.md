@@ -1412,6 +1412,63 @@
 
 ;; Type conversions
 
+;; QI (8-bit) <-> HI (16-bit)
+
+(define_insn "extendqihi2"
+  [(set (match_operand:HI 0 "metal_register_operand" "=R")
+	(sign_extend:HI (match_operand:QI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s16.s8 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "zero_extendqihi2"
+  [(set (match_operand:HI 0 "metal_register_operand" "=R")
+	(zero_extend:HI (match_operand:QI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u16.u8 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "trunchiqi2"
+  [(set (match_operand:QI 0 "metal_register_operand" "=R")
+	(truncate:QI (match_operand:HI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u8.u16 %0, %1"
+  [(set_attr "type" "alu")])
+
+;; QI (8-bit) -> SI (32-bit)
+
+(define_insn "extendqisi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(sign_extend:SI (match_operand:QI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s32.s8 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "zero_extendqisi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(zero_extend:SI (match_operand:QI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u32.u8 %0, %1"
+  [(set_attr "type" "alu")])
+
+;; HI (16-bit) -> SI (32-bit)
+
+(define_insn "extendhisi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(sign_extend:SI (match_operand:HI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s32.s16 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "zero_extendhisi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(zero_extend:SI (match_operand:HI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u32.u16 %0, %1"
+  [(set_attr "type" "alu")])
+
+;; SI (32-bit) -> DI (64-bit)
+
 (define_insn "zero_extendsidi2"
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(zero_extend:DI (match_operand:SI 1 "metal_register_operand" "R")))]
