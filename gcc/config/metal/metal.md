@@ -72,7 +72,7 @@
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(match_operand:SI 1 "metal_nonmemory_operand" "Ri"))]
   ""
-  "// mov.s32 %0, %1"
+  "%0 = %1;"
   [(set_attr "type" "move")])
 
 (define_expand "movdi"
@@ -85,7 +85,7 @@
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(match_operand:DI 1 "metal_nonmemory_operand" "Ri"))]
   ""
-  "// mov.s64 %0, %1"
+  "%0 = %1;"
   [(set_attr "type" "move")])
 
 (define_expand "movsf"
@@ -98,7 +98,7 @@
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
 	(match_operand:SF 1 "metal_register_operand" "R"))]
   ""
-  "// mov.f32 %0, %1"
+  "%0 = %1;"
   [(set_attr "type" "move")])
 
 (define_expand "movdf"
@@ -111,7 +111,7 @@
   [(set (match_operand:DF 0 "metal_register_operand" "=R")
 	(match_operand:DF 1 "metal_register_operand" "R"))]
   ""
-  "// mov.f64 %0, %1"
+  "%0 = %1;"
   [(set_attr "type" "move")])
 
 ;; Half-precision floating-point operations
@@ -126,35 +126,35 @@
   [(set (match_operand:HF 0 "metal_register_operand" "=R")
 	(match_operand:HF 1 "metal_register_operand" "R"))]
   ""
-  "// mov.f16 %0, %1"
+  "%0 = %1;"
   [(set_attr "type" "move")])
 
 (define_insn "extendhfsf2"
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
 	(float_extend:SF (match_operand:HF 1 "metal_register_operand" "R")))]
   ""
-  "// cvt.f32.f16 %0, %1"
+  "%0 = static_cast<float>(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "extendhfdf2"
   [(set (match_operand:DF 0 "metal_register_operand" "=R")
 	(float_extend:DF (match_operand:HF 1 "metal_register_operand" "R")))]
   ""
-  "// cvt.f64.f16 %0, %1"
+  "%0 = static_cast<double>(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "truncsfhf2"
   [(set (match_operand:HF 0 "metal_register_operand" "=R")
 	(float_truncate:HF (match_operand:SF 1 "metal_register_operand" "R")))]
   ""
-  "// cvt.f16.f32 %0, %1"
+  "%0 = static_cast<half>(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "truncdfhf2"
   [(set (match_operand:HF 0 "metal_register_operand" "=R")
 	(float_truncate:HF (match_operand:DF 1 "metal_register_operand" "R")))]
   ""
-  "// cvt.f16.f64 %0, %1"
+  "%0 = static_cast<half>(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "addhf3"
@@ -162,7 +162,7 @@
 	(plus:HF (match_operand:HF 1 "metal_register_operand" "R")
 		 (match_operand:HF 2 "metal_register_operand" "R")))]
   ""
-  "// add.f16 %0, %1, %2"
+  "%0 = %1 + %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "subhf3"
@@ -170,7 +170,7 @@
 	(minus:HF (match_operand:HF 1 "metal_register_operand" "R")
 		  (match_operand:HF 2 "metal_register_operand" "R")))]
   ""
-  "// sub.f16 %0, %1, %2"
+  "%0 = %1 - %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "mulhf3"
@@ -178,21 +178,21 @@
 	(mult:HF (match_operand:HF 1 "metal_register_operand" "R")
 		 (match_operand:HF 2 "metal_register_operand" "R")))]
   ""
-  "// mul.f16 %0, %1, %2"
+  "%0 = %1 * %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "neghf2"
   [(set (match_operand:HF 0 "metal_register_operand" "=R")
 	(neg:HF (match_operand:HF 1 "metal_register_operand" "R")))]
   ""
-  "// neg.f16 %0, %1"
+  "%0 = -%1;"
   [(set_attr "type" "fpu")])
 
 (define_insn "abshf2"
   [(set (match_operand:HF 0 "metal_register_operand" "=R")
 	(abs:HF (match_operand:HF 1 "metal_register_operand" "R")))]
   ""
-  "// abs.f16 %0, %1"
+  "%0 = abs(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "fmahf4"
@@ -201,7 +201,7 @@
 		(match_operand:HF 2 "metal_register_operand" "R")
 		(match_operand:HF 3 "metal_register_operand" "R")))]
   ""
-  "// fma.f16 %0, %1, %2, %3"
+  "%0 = fma(%1, %2, %3);"
   [(set_attr "type" "fpu")])
 
 ;; Arithmetic patterns
@@ -211,7 +211,7 @@
 	(plus:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// add.s32 %0, %1, %2"
+  "%0 = %1 + %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "adddi3"
@@ -219,7 +219,7 @@
 	(plus:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// add.s64 %0, %1, %2"
+  "%0 = %1 + %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "subsi3"
@@ -227,7 +227,7 @@
 	(minus:SI (match_operand:SI 1 "metal_register_operand" "R")
 		  (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// sub.s32 %0, %1, %2"
+  "%0 = %1 - %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "subdi3"
@@ -235,7 +235,7 @@
 	(minus:DI (match_operand:DI 1 "metal_register_operand" "R")
 		  (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// sub.s64 %0, %1, %2"
+  "%0 = %1 - %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "mulsi3"
@@ -243,7 +243,7 @@
 	(mult:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// mul.s32 %0, %1, %2"
+  "%0 = %1 * %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "muldi3"
@@ -251,7 +251,7 @@
 	(mult:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// mul.s64 %0, %1, %2"
+  "%0 = %1 * %2;"
   [(set_attr "type" "alu")])
 
 ;; Multiply-accumulate operations
@@ -263,7 +263,7 @@
                           (match_operand:SI 2 "metal_register_operand" "R"))
                  (match_operand:SI 3 "metal_register_operand" "R")))]
   ""
-  "// mad.lo.s32 %0, %1, %2, %3"
+  "%0 = %1 * %2 + %3;"
   [(set_attr "type" "alu")])
 
 (define_insn "*madddi4"
@@ -272,7 +272,7 @@
                           (match_operand:DI 2 "metal_register_operand" "R"))
                  (match_operand:DI 3 "metal_register_operand" "R")))]
   ""
-  "// mad.lo.s64 %0, %1, %2, %3"
+  "%0 = %1 * %2 + %3;"
   [(set_attr "type" "alu")])
 
 ;; Unsigned MAD
@@ -282,7 +282,7 @@
                           (match_operand:SI 2 "metal_register_operand" "R"))
                  (match_operand:SI 3 "metal_register_operand" "R")))]
   ""
-  "// mad.lo.u32 %0, %1, %2, %3"
+  "%0 = %1 * %2 + %3;"
   [(set_attr "type" "alu")])
 
 (define_insn "*umadddi4"
@@ -291,7 +291,7 @@
                           (match_operand:DI 2 "metal_register_operand" "R"))
                  (match_operand:DI 3 "metal_register_operand" "R")))]
   ""
-  "// mad.lo.u64 %0, %1, %2, %3"
+  "%0 = %1 * %2 + %3;"
   [(set_attr "type" "alu")])
 
 ;; Multiply-subtract: (a * b) - c
@@ -301,7 +301,7 @@
                            (match_operand:SI 2 "metal_register_operand" "R"))
                   (match_operand:SI 3 "metal_register_operand" "R")))]
   ""
-  "// msub.lo.s32 %0, %1, %2, %3"
+  "%0 = %1 * %2 - %3;"
   [(set_attr "type" "alu")])
 
 (define_insn "*msubdi4"
@@ -310,7 +310,7 @@
                            (match_operand:DI 2 "metal_register_operand" "R"))
                   (match_operand:DI 3 "metal_register_operand" "R")))]
   ""
-  "// msub.lo.s64 %0, %1, %2, %3"
+  "%0 = %1 * %2 - %3;"
   [(set_attr "type" "alu")])
 
 ;; Unsigned MSUB
@@ -320,7 +320,7 @@
                            (match_operand:SI 2 "metal_register_operand" "R"))
                   (match_operand:SI 3 "metal_register_operand" "R")))]
   ""
-  "// msub.lo.u32 %0, %1, %2, %3"
+  "%0 = %1 * %2 - %3;"
   [(set_attr "type" "alu")])
 
 (define_insn "*umsubdi4"
@@ -329,7 +329,7 @@
                            (match_operand:DI 2 "metal_register_operand" "R"))
                   (match_operand:DI 3 "metal_register_operand" "R")))]
   ""
-  "// msub.lo.u64 %0, %1, %2, %3"
+  "%0 = %1 * %2 - %3;"
   [(set_attr "type" "alu")])
 
 ;; Division and modulo
@@ -339,7 +339,7 @@
 	(div:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// div.s32 %0, %1, %2"
+  "%0 = %1 / %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "udivsi3"
@@ -347,7 +347,7 @@
 	(udiv:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// div.u32 %0, %1, %2"
+  "%0 = %1 / %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "modsi3"
@@ -355,7 +355,7 @@
 	(mod:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// rem.s32 %0, %1, %2"
+  "%0 = %1 % %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "umodsi3"
@@ -363,7 +363,7 @@
 	(umod:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// rem.u32 %0, %1, %2"
+  "%0 = %1 % %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "divdi3"
@@ -371,7 +371,7 @@
 	(div:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// div.s64 %0, %1, %2"
+  "%0 = %1 / %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "udivdi3"
@@ -379,7 +379,7 @@
 	(udiv:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// div.u64 %0, %1, %2"
+  "%0 = %1 / %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "moddi3"
@@ -387,7 +387,7 @@
 	(mod:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// rem.s64 %0, %1, %2"
+  "%0 = %1 % %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "umoddi3"
@@ -395,7 +395,7 @@
 	(umod:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// rem.u64 %0, %1, %2"
+  "%0 = %1 % %2;"
   [(set_attr "type" "alu")])
 
 ;; Unary arithmetic
@@ -404,28 +404,28 @@
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(neg:SI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
-  "// neg.s32 %0, %1"
+  "%0 = -%1;"
   [(set_attr "type" "alu")])
 
 (define_insn "negdi2"
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(neg:DI (match_operand:DI 1 "metal_register_operand" "R")))]
   ""
-  "// neg.s64 %0, %1"
+  "%0 = -%1;"
   [(set_attr "type" "alu")])
 
 (define_insn "one_cmplsi2"
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(not:SI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
-  "// not.b32 %0, %1"
+  "%0 = ~%1;"
   [(set_attr "type" "alu")])
 
 (define_insn "one_cmpldi2"
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(not:DI (match_operand:DI 1 "metal_register_operand" "R")))]
   ""
-  "// not.b64 %0, %1"
+  "%0 = ~%1;"
   [(set_attr "type" "alu")])
 
 ;; Logical operations
@@ -435,7 +435,7 @@
 	(and:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// and.b32 %0, %1, %2"
+  "%0 = %1 & %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "anddi3"
@@ -443,7 +443,7 @@
 	(and:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// and.b64 %0, %1, %2"
+  "%0 = %1 & %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "iorsi3"
@@ -451,7 +451,7 @@
 	(ior:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// or.b32 %0, %1, %2"
+  "%0 = %1 | %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "iordi3"
@@ -459,7 +459,7 @@
 	(ior:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// or.b64 %0, %1, %2"
+  "%0 = %1 | %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "xorsi3"
@@ -467,7 +467,7 @@
 	(xor:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// xor.b32 %0, %1, %2"
+  "%0 = %1 ^ %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "xordi3"
@@ -475,7 +475,7 @@
 	(xor:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// xor.b64 %0, %1, %2"
+  "%0 = %1 ^ %2;"
   [(set_attr "type" "alu")])
 
 ;; Shift operations
@@ -485,7 +485,7 @@
 	(ashift:SI (match_operand:SI 1 "metal_register_operand" "R")
 		   (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// shl.b32 %0, %1, %2"
+  "%0 = %1 << %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "ashldi3"
@@ -493,7 +493,7 @@
 	(ashift:DI (match_operand:DI 1 "metal_register_operand" "R")
 		   (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// shl.b64 %0, %1, %2"
+  "%0 = %1 << %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "ashrsi3"
@@ -501,7 +501,7 @@
 	(ashiftrt:SI (match_operand:SI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// shr.s32 %0, %1, %2"
+  "%0 = %1 >> %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "ashrdi3"
@@ -509,7 +509,7 @@
 	(ashiftrt:DI (match_operand:DI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// shr.s64 %0, %1, %2"
+  "%0 = %1 >> %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "lshrsi3"
@@ -517,7 +517,7 @@
 	(lshiftrt:SI (match_operand:SI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// shr.u32 %0, %1, %2"
+  "%0 = %1 >> %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "lshrdi3"
@@ -525,7 +525,7 @@
 	(lshiftrt:DI (match_operand:DI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// shr.u64 %0, %1, %2"
+  "%0 = %1 >> %2;"
   [(set_attr "type" "alu")])
 
 ;; Bit manipulation operations
@@ -534,28 +534,28 @@
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(bitreverse:SI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
-  "// brev.b32 %0, %1"
+  "%0 = reverse_bits(%1);"
   [(set_attr "type" "alu")])
 
 (define_insn "bitrevdi2"
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(bitreverse:DI (match_operand:DI 1 "metal_register_operand" "R")))]
   ""
-  "// brev.b64 %0, %1"
+  "%0 = reverse_bits(%1);"
   [(set_attr "type" "alu")])
 
 (define_insn "clzsi2"
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(clz:SI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
-  "// clz.b32 %0, %1"
+  "%0 = clz(%1);"
   [(set_attr "type" "alu")])
 
 (define_insn "clzdi2"
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(clz:SI (match_operand:DI 1 "metal_register_operand" "R")))]
   ""
-  "// clz.b64 %0, %1"
+  "%0 = clz(%1);"
   [(set_attr "type" "alu")])
 
 (define_expand "ctzsi2"
@@ -584,7 +584,7 @@
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(popcount:SI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
-  "// popc.b32 %0, %1"
+  "%0 = popcount(%1);"
   [(set_attr "type" "alu")])
 
 (define_insn "popcountdi2"
@@ -592,7 +592,7 @@
 	(truncate:SI
 	  (popcount:DI (match_operand:DI 1 "metal_register_operand" "R"))))]
   ""
-  "// popc.b64 %0, %1"
+  "%0 = popcount(%1);"
   [(set_attr "type" "alu")])
 
 ;; Rotate operations
@@ -673,7 +673,7 @@
 	(plus:SF (match_operand:SF 1 "metal_register_operand" "R")
 		 (match_operand:SF 2 "metal_register_operand" "R")))]
   ""
-  "// add.f32 %0, %1, %2"
+  "%0 = %1 + %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "adddf3"
@@ -681,7 +681,7 @@
 	(plus:DF (match_operand:DF 1 "metal_register_operand" "R")
 		 (match_operand:DF 2 "metal_register_operand" "R")))]
   ""
-  "// add.f64 %0, %1, %2"
+  "%0 = %1 + %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "subsf3"
@@ -689,7 +689,7 @@
 	(minus:SF (match_operand:SF 1 "metal_register_operand" "R")
 		  (match_operand:SF 2 "metal_register_operand" "R")))]
   ""
-  "// sub.f32 %0, %1, %2"
+  "%0 = %1 - %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "subdf3"
@@ -697,7 +697,7 @@
 	(minus:DF (match_operand:DF 1 "metal_register_operand" "R")
 		  (match_operand:DF 2 "metal_register_operand" "R")))]
   ""
-  "// sub.f64 %0, %1, %2"
+  "%0 = %1 - %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "mulsf3"
@@ -705,7 +705,7 @@
 	(mult:SF (match_operand:SF 1 "metal_register_operand" "R")
 		 (match_operand:SF 2 "metal_register_operand" "R")))]
   ""
-  "// mul.f32 %0, %1, %2"
+  "%0 = %1 * %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "muldf3"
@@ -713,7 +713,7 @@
 	(mult:DF (match_operand:DF 1 "metal_register_operand" "R")
 		 (match_operand:DF 2 "metal_register_operand" "R")))]
   ""
-  "// mul.f64 %0, %1, %2"
+  "%0 = %1 * %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "divsf3"
@@ -721,7 +721,7 @@
 	(div:SF (match_operand:SF 1 "metal_register_operand" "R")
 		(match_operand:SF 2 "metal_register_operand" "R")))]
   ""
-  "// div.f32 %0, %1, %2"
+  "%0 = %1 / %2;"
   [(set_attr "type" "fpu")])
 
 (define_insn "divdf3"
@@ -729,7 +729,7 @@
 	(div:DF (match_operand:DF 1 "metal_register_operand" "R")
 		(match_operand:DF 2 "metal_register_operand" "R")))]
   ""
-  "// div.f64 %0, %1, %2"
+  "%0 = %1 / %2;"
   [(set_attr "type" "fpu")])
 
 ;; Floating point unary operations
@@ -738,42 +738,42 @@
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
 	(neg:SF (match_operand:SF 1 "metal_register_operand" "R")))]
   ""
-  "// neg.f32 %0, %1"
+  "%0 = -%1;"
   [(set_attr "type" "fpu")])
 
 (define_insn "negdf2"
   [(set (match_operand:DF 0 "metal_register_operand" "=R")
 	(neg:DF (match_operand:DF 1 "metal_register_operand" "R")))]
   ""
-  "// neg.f64 %0, %1"
+  "%0 = -%1;"
   [(set_attr "type" "fpu")])
 
 (define_insn "abssf2"
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
 	(abs:SF (match_operand:SF 1 "metal_register_operand" "R")))]
   ""
-  "// abs.f32 %0, %1"
+  "%0 = abs(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "absdf2"
   [(set (match_operand:DF 0 "metal_register_operand" "=R")
 	(abs:DF (match_operand:DF 1 "metal_register_operand" "R")))]
   ""
-  "// abs.f64 %0, %1"
+  "%0 = abs(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "sqrtsf2"
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
 	(sqrt:SF (match_operand:SF 1 "metal_register_operand" "R")))]
   ""
-  "// sqrt.f32 %0, %1"
+  "%0 = sqrt(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "sqrtdf2"
   [(set (match_operand:DF 0 "metal_register_operand" "=R")
 	(sqrt:DF (match_operand:DF 1 "metal_register_operand" "R")))]
   ""
-  "// sqrt.f64 %0, %1"
+  "%0 = sqrt(%1);"
   [(set_attr "type" "fpu")])
 
 ;; Fused multiply-add
@@ -784,7 +784,7 @@
 		(match_operand:SF 2 "metal_register_operand" "R")
 		(match_operand:SF 3 "metal_register_operand" "R")))]
   ""
-  "// fma.f32 %0, %1, %2, %3"
+  "%0 = fma(%1, %2, %3);"
   [(set_attr "type" "fpu")])
 
 (define_insn "fmadf4"
@@ -793,7 +793,7 @@
 		(match_operand:DF 2 "metal_register_operand" "R")
 		(match_operand:DF 3 "metal_register_operand" "R")))]
   ""
-  "// fma.f64 %0, %1, %2, %3"
+  "%0 = fma(%1, %2, %3);"
   [(set_attr "type" "fpu")])
 
 ;; Floating-point special functions
@@ -803,7 +803,7 @@
 	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
 		   UNSPEC_LOG2))]
   ""
-  "// lg2.approx.f32 %0, %1"
+  "%0 = log2(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "log2df2"
@@ -811,7 +811,7 @@
 	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
 		   UNSPEC_LOG2))]
   ""
-  "// lg2.approx.f64 %0, %1"
+  "%0 = log2(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "exp2sf2"
@@ -819,7 +819,7 @@
 	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
 		   UNSPEC_EXP2))]
   ""
-  "// ex2.approx.f32 %0, %1"
+  "%0 = exp2(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "exp2df2"
@@ -827,7 +827,7 @@
 	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
 		   UNSPEC_EXP2))]
   ""
-  "// ex2.approx.f64 %0, %1"
+  "%0 = exp2(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "sinsf2"
@@ -835,7 +835,7 @@
 	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
 		   UNSPEC_SIN))]
   ""
-  "// sin.approx.f32 %0, %1"
+  "%0 = sin(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "sindf2"
@@ -843,7 +843,7 @@
 	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
 		   UNSPEC_SIN))]
   ""
-  "// sin.approx.f64 %0, %1"
+  "%0 = sin(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "cossf2"
@@ -851,7 +851,7 @@
 	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
 		   UNSPEC_COS))]
   ""
-  "// cos.approx.f32 %0, %1"
+  "%0 = cos(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "cosdf2"
@@ -859,7 +859,7 @@
 	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
 		   UNSPEC_COS))]
   ""
-  "// cos.approx.f64 %0, %1"
+  "%0 = cos(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "rsqrtsf2"
@@ -867,7 +867,7 @@
 	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
 		   UNSPEC_RSQRT))]
   ""
-  "// rsqrt.approx.f32 %0, %1"
+  "%0 = rsqrt(%1);"
   [(set_attr "type" "fpu")])
 
 (define_insn "rsqrtdf2"
@@ -875,7 +875,7 @@
 	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
 		   UNSPEC_RSQRT))]
   ""
-  "// rsqrt.approx.f64 %0, %1"
+  "%0 = rsqrt(%1);"
   [(set_attr "type" "fpu")])
 
 ;; Integer min/max
@@ -885,7 +885,7 @@
 	(smin:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// min.s32 %0, %1, %2"
+  "%0 = min(%1, %2);"
   [(set_attr "type" "alu")])
 
 (define_insn "smaxsi3"
@@ -893,7 +893,7 @@
 	(smax:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// max.s32 %0, %1, %2"
+  "%0 = max(%1, %2);"
   [(set_attr "type" "alu")])
 
 (define_insn "uminsi3"
@@ -984,14 +984,14 @@
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(abs:SI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
-  "// abs.s32 %0, %1"
+  "%0 = abs(%1);"
   [(set_attr "type" "alu")])
 
 (define_insn "absdi2"
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(abs:DI (match_operand:DI 1 "metal_register_operand" "R")))]
   ""
-  "// abs.s64 %0, %1"
+  "%0 = abs(%1);"
   [(set_attr "type" "alu")])
 
 ;; Wide multiply (SI x SI -> DI)
