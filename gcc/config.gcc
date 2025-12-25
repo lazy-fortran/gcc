@@ -512,6 +512,9 @@ nvptx-*-*)
 	cxx_target_objs="nvptx-c.o"
 	extra_options="${extra_options} nvptx/nvptx-gen.opt"
 	;;
+metal-*-*)
+	cpu_type=metal
+	;;
 or1k*-*-*)
 	cpu_type=or1k
 	;;
@@ -2880,6 +2883,13 @@ nvptx-*)
 	if test x$enable_as_accelerator = xyes; then
 		extra_programs="${extra_programs} mkoffload\$(exeext)"
 		tm_file="${tm_file} nvptx/offload.h"
+	fi
+	;;
+metal-*)
+	tmake_file="metal/t-metal"
+	if test x$enable_as_accelerator = xyes; then
+		extra_programs="${extra_programs} mkoffload\$(exeext)"
+		tm_file="${tm_file} metal/offload.h"
 	fi
 	;;
 or1k*-*-*)
