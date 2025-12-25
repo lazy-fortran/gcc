@@ -20,6 +20,13 @@
 #ifndef GCC_METAL_H
 #define GCC_METAL_H
 
+/* MSL (Metal Shading Language) version constants.  */
+enum msl_version {
+  MSL_VERSION_2_4 = 24,
+  MSL_VERSION_3_0 = 30,
+  MSL_VERSION_3_1 = 31
+};
+
 /* Run-time Target.  */
 
 #define TARGET_CPU_CPP_BUILTINS() metal_cpu_cpp_builtins ()

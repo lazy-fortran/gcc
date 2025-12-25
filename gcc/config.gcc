@@ -514,6 +514,7 @@ nvptx-*-*)
 	;;
 metal-*-*)
 	cpu_type=metal
+	extra_options="${extra_options} metal/metal.opt"
 	;;
 or1k*-*-*)
 	cpu_type=or1k
