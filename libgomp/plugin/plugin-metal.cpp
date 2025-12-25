@@ -931,6 +931,26 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
       return;
     }
 
+  /* Validate device ordinal is within bounds before indexing metal_devices[].  */
+  metal_enumerate_devices ();
+  if (aq->device_ord < 0 || aq->device_ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: invalid device ordinal %d",
+			 aq->device_ord);
+      return;
+    }
+
+  /* Verify device is initialized before attempting dispatch.  */
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[aq->device_ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("openacc_async_exec: device %d not initialized",
+			 aq->device_ord);
+      return;
+    }
+  pthread_mutex_unlock (&metal_lock);
+
   /* When GOMP_OFFLOAD_load_image is implemented, this will execute kernels.
      Current status: kernel loading infrastructure not yet implemented.
 
