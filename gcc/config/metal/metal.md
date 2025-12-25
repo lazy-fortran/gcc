@@ -109,6 +109,96 @@
   "// mov.f64 %0, %1"
   [(set_attr "type" "move")])
 
+;; Half-precision floating-point operations
+
+(define_expand "movhf"
+  [(set (match_operand:HF 0 "nonimmediate_operand")
+	(match_operand:HF 1 "general_operand"))]
+  ""
+  "")
+
+(define_insn "*movhf_insn"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(match_operand:HF 1 "metal_register_operand" "R"))]
+  ""
+  "// mov.f16 %0, %1"
+  [(set_attr "type" "move")])
+
+(define_insn "extendhfsf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(float_extend:SF (match_operand:HF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f32.f16 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "extendhfdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(float_extend:DF (match_operand:HF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f64.f16 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "truncsfhf2"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(float_truncate:HF (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f16.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "truncdfhf2"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(float_truncate:HF (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f16.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "addhf3"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(plus:HF (match_operand:HF 1 "metal_register_operand" "R")
+		 (match_operand:HF 2 "metal_register_operand" "R")))]
+  ""
+  "// add.f16 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "subhf3"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(minus:HF (match_operand:HF 1 "metal_register_operand" "R")
+		  (match_operand:HF 2 "metal_register_operand" "R")))]
+  ""
+  "// sub.f16 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "mulhf3"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(mult:HF (match_operand:HF 1 "metal_register_operand" "R")
+		 (match_operand:HF 2 "metal_register_operand" "R")))]
+  ""
+  "// mul.f16 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "neghf2"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(neg:HF (match_operand:HF 1 "metal_register_operand" "R")))]
+  ""
+  "// neg.f16 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "abshf2"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(abs:HF (match_operand:HF 1 "metal_register_operand" "R")))]
+  ""
+  "// abs.f16 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fmahf4"
+  [(set (match_operand:HF 0 "metal_register_operand" "=R")
+	(fma:HF (match_operand:HF 1 "metal_register_operand" "R")
+		(match_operand:HF 2 "metal_register_operand" "R")
+		(match_operand:HF 3 "metal_register_operand" "R")))]
+  ""
+  "// fma.f16 %0, %1, %2, %3"
+  [(set_attr "type" "fpu")])
+
 ;; Arithmetic patterns
 
 (define_insn "addsi3"
