@@ -529,12 +529,6 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   new_image->fn_num = fn_entries;
   new_image->next = nullptr;
 
-  /* Add image to device's image list.  */
-  pthread_mutex_lock (&metal_devices[ord].image_lock);
-  new_image->next = metal_devices[ord].images;
-  metal_devices[ord].images = new_image;
-  pthread_mutex_unlock (&metal_devices[ord].image_lock);
-
   /* Load each kernel function and create compute pipeline.  */
   for (unsigned i = 0; i < fn_entries; i++)
     {
@@ -546,6 +540,18 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
 	{
 	  GOMP_PLUGIN_error ("failed to create string for function name %s",
 			     fn_name);
+	  /* Clean up previously loaded functions and pipelines.  */
+	  for (unsigned k = 0; k < i; k++)
+	    {
+	      if (targ_fns[k].pipeline)
+		targ_fns[k].pipeline->release ();
+	      if (targ_fns[k].fn)
+		targ_fns[k].fn->release ();
+	    }
+	  library->release ();
+	  free (new_image);
+	  free (targ_fns);
+	  free (targ_tbl);
 	  return -1;
 	}
 
@@ -553,6 +559,18 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
       if (!function)
 	{
 	  GOMP_PLUGIN_error ("Metal function %s not found in library", fn_name);
+	  /* Clean up previously loaded functions and pipelines.  */
+	  for (unsigned k = 0; k < i; k++)
+	    {
+	      if (targ_fns[k].pipeline)
+		targ_fns[k].pipeline->release ();
+	      if (targ_fns[k].fn)
+		targ_fns[k].fn->release ();
+	    }
+	  library->release ();
+	  free (new_image);
+	  free (targ_fns);
+	  free (targ_tbl);
 	  return -1;
 	}
 
@@ -576,6 +594,18 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
 
 	  if (function)
 	    function->release ();
+	  /* Clean up previously loaded functions and pipelines.  */
+	  for (unsigned k = 0; k < i; k++)
+	    {
+	      if (targ_fns[k].pipeline)
+		targ_fns[k].pipeline->release ();
+	      if (targ_fns[k].fn)
+		targ_fns[k].fn->release ();
+	    }
+	  library->release ();
+	  free (new_image);
+	  free (targ_fns);
+	  free (targ_tbl);
 	  return -1;
 	}
 
@@ -595,6 +625,12 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
       targ_tbl[fn_entries + j].start = 0;
       targ_tbl[fn_entries + j].end = 0;
     }
+
+  /* All functions loaded successfully, add image to device's image list.  */
+  pthread_mutex_lock (&metal_devices[ord].image_lock);
+  new_image->next = metal_devices[ord].images;
+  metal_devices[ord].images = new_image;
+  pthread_mutex_unlock (&metal_devices[ord].image_lock);
 
   /* Reverse function table not yet implemented for Metal.  */
   if (rev_fn_table)
