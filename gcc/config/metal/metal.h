@@ -39,6 +39,14 @@ enum metal_addr_space {
 
 #define TARGET_CPU_CPP_BUILTINS() metal_cpu_cpp_builtins ()
 
+/* Driver specs.  Metal is an offload-only target without standalone
+   execution support, so these specs are empty.  */
+
+#define STARTFILE_SPEC ""
+#define ENDFILE_SPEC ""
+#define LIB_SPEC ""
+#define LINK_SPEC ""
+
 /* Storage Layout.  */
 
 #define BITS_BIG_ENDIAN 0
