@@ -39,7 +39,9 @@
 #include <dispatch/dispatch.h>
 
 extern "C" {
+#define _LIBGOMP_PLUGIN_INCLUDE 1
 #include "libgomp-plugin.h"
+#undef _LIBGOMP_PLUGIN_INCLUDE
 #include "gomp-constants.h"
 #include "oacc-plugin.h"
 }
@@ -1883,6 +1885,84 @@ GOMP_OFFLOAD_openacc_get_property (int ord, enum goacc_property prop)
 
   pthread_mutex_unlock (&metal_lock);
   return propval;
+}
+
+/* Return true if the Metal runtime can run function FN_PTR.  */
+
+bool
+GOMP_OFFLOAD_can_run (void *fn_ptr)
+{
+  /* For Metal plugin, all loaded functions are executable.
+     Metal doesn't require runtime capability checks like HSA.  */
+  return fn_ptr != NULL;
+}
+
+/* Generic interop support.  Metal plugin provides basic stub implementations
+   for OpenMP interop interface.  These allow code to link successfully but
+   do not provide full interop functionality.  */
+
+void
+GOMP_OFFLOAD_interop (struct interop_obj_t *obj, int ord,
+		      enum gomp_interop_flag action, bool targetsync,
+		      const char *prefer_type)
+{
+  /* Stub implementation: Metal plugin does not currently support
+     OpenMP interop objects.  This minimal implementation prevents
+     link errors but provides no actual functionality.  */
+  (void) obj;
+  (void) ord;
+  (void) action;
+  (void) targetsync;
+  (void) prefer_type;
+}
+
+intptr_t
+GOMP_OFFLOAD_get_interop_int (struct interop_obj_t *obj,
+			      omp_interop_property_t property_id,
+			      omp_interop_rc_t *ret_code)
+{
+  /* Stub implementation: return no value available.  */
+  (void) obj;
+  (void) property_id;
+  if (ret_code)
+    *ret_code = omp_irc_no_value;
+  return 0;
+}
+
+void *
+GOMP_OFFLOAD_get_interop_ptr (struct interop_obj_t *obj,
+			      omp_interop_property_t property_id,
+			      omp_interop_rc_t *ret_code)
+{
+  /* Stub implementation: return no value available.  */
+  (void) obj;
+  (void) property_id;
+  if (ret_code)
+    *ret_code = omp_irc_no_value;
+  return NULL;
+}
+
+const char *
+GOMP_OFFLOAD_get_interop_str (struct interop_obj_t *obj,
+			      omp_interop_property_t property_id,
+			      omp_interop_rc_t *ret_code)
+{
+  /* Stub implementation: return no value available.  */
+  (void) obj;
+  (void) property_id;
+  if (ret_code)
+    *ret_code = omp_irc_no_value;
+  return NULL;
+}
+
+const char *
+GOMP_OFFLOAD_get_interop_type_desc (struct interop_obj_t *obj,
+				    omp_interop_property_t property_id)
+{
+  /* Stub implementation: Metal plugin does not provide type descriptors.  */
+  (void) obj;
+  (void) property_id;
+  return NULL;
 }
 
 } /* extern "C" */
