@@ -936,8 +936,10 @@ GOMP_OFFLOAD_openacc_get_property (int ord, enum goacc_property prop)
   switch (prop)
     {
     case GOACC_PROPERTY_MEMORY:
-      /* Return recommended working set size as total memory.
-	 This is the optimal size for GPU workloads on this device.  */
+      /* Metal API doesn't provide total device memory.  Return
+	 recommendedMaxWorkingSetSize() as approximation.  This is Apple's
+	 recommendation for optimal working set size, NOT total memory.
+	 On unified memory systems, actual available memory may be larger.  */
       propval.val = device->recommendedMaxWorkingSetSize ();
       break;
 
