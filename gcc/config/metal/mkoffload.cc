@@ -39,6 +39,13 @@
 #include "collect-utils.h"
 #include "gomp-constants.h"
 
+#ifndef GOMP_DEVICE_METAL
+#define GOMP_DEVICE_METAL 99  /* TODO: Add to gomp-constants.h */
+#endif
+#ifndef GOMP_VERSION_METAL
+#define GOMP_VERSION_METAL 1
+#endif
+
 const char tool_name[] = "metal mkoffload";
 
 #define COMMENT_PREFIX "//"
@@ -52,6 +59,20 @@ struct id_map
 
 static id_map *func_ids, **funcs_tail = &func_ids;
 static id_map *var_ids, **vars_tail = &var_ids;
+
+/* Free id_map linked list.  */
+static void
+free_id_maps (id_map *map)
+{
+  while (map)
+    {
+      id_map *next = map->next;
+      free (map->msl_name);
+      free (map->dim);
+      free (map);
+      map = next;
+    }
+}
 
 /* Files to unlink.  */
 static const char *msl_name;
@@ -284,28 +305,34 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 
   fprintf (out, "extern const void *const __OFFLOAD_TABLE__[];\n\n");
 
-  /* TODO: Define proper GOMP_DEVICE_METAL constant.  */
   fprintf (out, "static __attribute__((constructor)) void init (void)\n"
 	   "{\n"
 	   "  GOMP_offload_register_ver (%#x, __OFFLOAD_TABLE__,"
 	   " %d/*METAL*/, &metal_data);\n"
 	   "};\n",
-	   GOMP_VERSION_PACK (GOMP_VERSION, GOMP_VERSION_NVIDIA_PTX),
-	   GOMP_DEVICE_NVIDIA_PTX);
+	   GOMP_VERSION_PACK (GOMP_VERSION, GOMP_VERSION_METAL),
+	   GOMP_DEVICE_METAL);
 
   fprintf (out, "static __attribute__((destructor)) void fini (void)\n"
 	   "{\n"
 	   "  GOMP_offload_unregister_ver (%#x, __OFFLOAD_TABLE__,"
 	   " %d/*METAL*/, &metal_data);\n"
 	   "};\n",
-	   GOMP_VERSION_PACK (GOMP_VERSION, GOMP_VERSION_NVIDIA_PTX),
-	   GOMP_DEVICE_NVIDIA_PTX);
+	   GOMP_VERSION_PACK (GOMP_VERSION, GOMP_VERSION_METAL),
+	   GOMP_DEVICE_METAL);
+
+  /* Free input buffer allocated by read_file.  */
+  free (CONST_CAST (char *, input));
 }
 
-/* Compile MSL to metallib using Metal toolchain.  */
+/* Compile MSL to metallib using Metal toolchain.
+   TODO: This function will be integrated when the Metal backend generates
+   actual MSL code. Currently unused as we generate placeholder MSL in the
+   C source output directly.  */
 
 static void
-compile_metal (const char *msl_file, const char *metallib_file)
+compile_metal (const char *msl_file ATTRIBUTE_UNUSED,
+	       const char *metallib_file ATTRIBUTE_UNUSED)
 {
   const char *air_file = air_name;
   if (!air_file)
@@ -557,9 +584,12 @@ main (int argc, char **argv)
       obstack_free (&argv_obstack, NULL);
       unsetenv ("GCC_OFFLOAD_OMP_REQUIRES_FILE");
 
-      xputenv (concat ("GCC_EXEC_PREFIX=", execpath, NULL));
-      xputenv (concat ("COMPILER_PATH=", cpath, NULL));
-      xputenv (concat ("LIBRARY_PATH=", lpath, NULL));
+      if (execpath)
+	xputenv (concat ("GCC_EXEC_PREFIX=", execpath, NULL));
+      if (cpath)
+	xputenv (concat ("COMPILER_PATH=", cpath, NULL));
+      if (lpath)
+	xputenv (concat ("LIBRARY_PATH=", lpath, NULL));
 
       in = fopen (omp_requires_file, "rb");
       if (!in)
@@ -582,6 +612,9 @@ main (int argc, char **argv)
   fclose (out);
 
   compile_native (msl_cfile_name, outname, collect_gcc, fPIC, fpic);
+
+  free_id_maps (func_ids);
+  free_id_maps (var_ids);
 
   return 0;
 }
