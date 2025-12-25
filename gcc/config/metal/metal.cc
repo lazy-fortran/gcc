@@ -41,9 +41,24 @@
 #include "expr.h"
 #include "stor-layout.h"
 #include "builtins.h"
+#include "attribs.h"
+#include "gimplify.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
+
+/* Codes for all the Metal builtins.  */
+enum metal_builtins
+{
+  METAL_BUILTIN_THREAD_POSITION_IN_GRID,
+  METAL_BUILTIN_THREADGROUP_POSITION_IN_GRID,
+  METAL_BUILTIN_THREAD_POSITION_IN_THREADGROUP,
+  METAL_BUILTIN_THREADS_PER_THREADGROUP,
+  METAL_BUILTIN_THREADGROUP_BARRIER,
+  METAL_BUILTIN_MAX
+};
+
+static GTY(()) tree metal_builtin_decls[METAL_BUILTIN_MAX];
 
 /* Implement TARGET_CPU_CPP_BUILTINS.  */
 
@@ -63,12 +78,179 @@ metal_option_override (void)
   flag_no_common = 1;
 }
 
+/* Handle a "kernel" attribute; arguments as in
+   struct attribute_spec.handler.  */
+
+static tree
+metal_handle_kernel_attribute (tree *node, tree name, tree ARG_UNUSED (args),
+				int ARG_UNUSED (flags), bool *no_add_attrs)
+{
+  tree decl = *node;
+
+  if (TREE_CODE (decl) != FUNCTION_DECL)
+    {
+      error ("%qE attribute only applies to functions", name);
+      *no_add_attrs = true;
+    }
+  else if (!VOID_TYPE_P (TREE_TYPE (TREE_TYPE (decl))))
+    {
+      error ("%qE attribute requires a void return type", name);
+      *no_add_attrs = true;
+    }
+
+  return NULL_TREE;
+}
+
+/* Table of valid machine attributes.  */
+TARGET_GNU_ATTRIBUTES (metal_attribute_table,
+{
+  { "kernel", 0, 0, true, false, false, false,
+    metal_handle_kernel_attribute, NULL }
+});
+
 /* Implement TARGET_INIT_BUILTINS.  */
 
 static void
 metal_init_builtins (void)
 {
-  /* Placeholder for Metal-specific builtins.  */
+#define DEF(ID, NAME, T)						\
+  (metal_builtin_decls[METAL_BUILTIN_ ## ID]				\
+   = add_builtin_function ("__metal_" NAME,				\
+			   build_function_type_list T,			\
+			   METAL_BUILTIN_ ## ID, BUILT_IN_MD, NULL, NULL))
+#define UINT unsigned_type_node
+#define VOID void_type_node
+
+  DEF (THREAD_POSITION_IN_GRID, "thread_position_in_grid",
+       (UINT, UINT, NULL_TREE));
+  DEF (THREADGROUP_POSITION_IN_GRID, "threadgroup_position_in_grid",
+       (UINT, UINT, NULL_TREE));
+  DEF (THREAD_POSITION_IN_THREADGROUP, "thread_position_in_threadgroup",
+       (UINT, UINT, NULL_TREE));
+  DEF (THREADS_PER_THREADGROUP, "threads_per_threadgroup",
+       (UINT, UINT, NULL_TREE));
+  DEF (THREADGROUP_BARRIER, "threadgroup_barrier", (VOID, VOID, NULL_TREE));
+
+#undef DEF
+#undef UINT
+#undef VOID
+}
+
+/* Implement TARGET_BUILTIN_DECL.  */
+
+static tree
+metal_builtin_decl (unsigned code, bool ARG_UNUSED (initialize_p))
+{
+  if (code >= METAL_BUILTIN_MAX)
+    return error_mark_node;
+
+  return metal_builtin_decls[code];
+}
+
+/* Implement TARGET_EXPAND_BUILTIN.  */
+
+static rtx
+metal_expand_builtin (tree exp, rtx target, rtx ARG_UNUSED (subtarget),
+		      machine_mode mode, int ignore)
+{
+  tree fndecl = TREE_OPERAND (CALL_EXPR_FN (exp), 0);
+  unsigned int fcode = DECL_MD_FUNCTION_CODE (fndecl);
+
+  if (ignore)
+    return NULL_RTX;
+
+  switch (fcode)
+    {
+    case METAL_BUILTIN_THREAD_POSITION_IN_GRID:
+    case METAL_BUILTIN_THREADGROUP_POSITION_IN_GRID:
+    case METAL_BUILTIN_THREAD_POSITION_IN_THREADGROUP:
+    case METAL_BUILTIN_THREADS_PER_THREADGROUP:
+      if (!target || !register_operand (target, mode))
+	target = gen_reg_rtx (mode);
+      return target;
+    case METAL_BUILTIN_THREADGROUP_BARRIER:
+      /* Void builtin - no return value, just emit barrier.  */
+      return const0_rtx;
+    default:
+      gcc_unreachable ();
+    }
+
+  return NULL_RTX;
+}
+
+/* Implement TARGET_ADDR_SPACE_POINTER_MODE.  */
+
+static scalar_int_mode
+metal_addr_space_pointer_mode (addr_space_t addrspace)
+{
+  switch (addrspace)
+    {
+    case ADDR_SPACE_GENERIC:
+    case ADDR_SPACE_DEVICE:
+    case ADDR_SPACE_THREADGROUP:
+    case ADDR_SPACE_CONSTANT:
+      return ptr_mode;
+    default:
+      gcc_unreachable ();
+    }
+}
+
+/* Implement TARGET_ADDR_SPACE_ADDRESS_MODE.  */
+
+static scalar_int_mode
+metal_addr_space_address_mode (addr_space_t addrspace)
+{
+  return metal_addr_space_pointer_mode (addrspace);
+}
+
+/* Implement TARGET_ADDR_SPACE_VALID_POINTER_MODE.  */
+
+static bool
+metal_addr_space_valid_pointer_mode (scalar_int_mode mode,
+				     addr_space_t ARG_UNUSED (as))
+{
+  return mode == ptr_mode;
+}
+
+/* Implement TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P.  */
+
+static bool
+metal_addr_space_legitimate_address_p (machine_mode mode, rtx x,
+				       bool strict, addr_space_t as,
+				       code_helper ch)
+{
+  return metal_legitimate_address_p (mode, x, strict, ch);
+}
+
+/* Implement TARGET_ADDR_SPACE_SUBSET_P.  */
+
+static bool
+metal_addr_space_subset_p (addr_space_t subset, addr_space_t superset)
+{
+  return subset == superset || superset == ADDR_SPACE_GENERIC;
+}
+
+/* Implement TARGET_ADDR_SPACE_CONVERT.  */
+
+static rtx
+metal_addr_space_convert (rtx op, tree from_type, tree to_type)
+{
+  if (!from_type || !to_type)
+    return op;
+
+  tree from_tree_type = TREE_TYPE (from_type);
+  tree to_tree_type = TREE_TYPE (to_type);
+
+  if (!from_tree_type || !to_tree_type)
+    return op;
+
+  addr_space_t from_as = TYPE_ADDR_SPACE (from_tree_type);
+  addr_space_t to_as = TYPE_ADDR_SPACE (to_tree_type);
+
+  if (from_as == to_as)
+    return op;
+
+  return convert_memory_address (TYPE_MODE (to_type), op);
 }
 
 /* Implement TARGET_FUNCTION_ARG.  */
@@ -126,10 +308,32 @@ metal_static_chain (const_tree, bool)
 /* Implement TARGET_LEGITIMATE_ADDRESS_P.  */
 
 static bool
-metal_legitimate_address_p (machine_mode, rtx, bool, code_helper)
+metal_legitimate_address_p (machine_mode mode, rtx x, bool strict,
+			    code_helper)
 {
-  /* For now, accept all addresses.  */
-  return true;
+  /* Basic address validation for Metal address spaces.  */
+  if (REG_P (x))
+    return true;
+
+  if (CONST_INT_P (x))
+    return true;
+
+  if (GET_CODE (x) == PLUS)
+    {
+      rtx op0 = XEXP (x, 0);
+      rtx op1 = XEXP (x, 1);
+
+      if (REG_P (op0) && CONST_INT_P (op1))
+	return true;
+
+      if (REG_P (op1) && CONST_INT_P (op0))
+	return true;
+    }
+
+  if (GET_CODE (x) == SYMBOL_REF || GET_CODE (x) == LABEL_REF)
+    return true;
+
+  return false;
 }
 
 /* Implement PRINT_OPERAND.  */
@@ -154,6 +358,25 @@ void
 metal_print_operand_address (FILE *file, rtx addr)
 {
   output_addr_const (file, addr);
+}
+
+/* Check if a function should be emitted as a kernel.  */
+
+static bool
+metal_write_as_kernel (tree attrs)
+{
+  return lookup_attribute ("kernel", attrs) != NULL_TREE;
+}
+
+/* Implement ASM_DECLARE_FUNCTION_NAME.  Emit [[kernel]] attribute
+   for functions marked with the kernel attribute.  */
+
+void
+metal_declare_function_name (FILE *file, const char *name, tree decl)
+{
+  if (metal_write_as_kernel (DECL_ATTRIBUTES (decl)))
+    fprintf (file, "[[kernel]] ");
+  fprintf (file, "void %s", name);
 }
 
 /* Implement TARGET_ASM_FILE_START.  */
@@ -220,6 +443,32 @@ metal_legitimate_constant_p (machine_mode, rtx)
 
 #undef TARGET_INIT_BUILTINS
 #define TARGET_INIT_BUILTINS metal_init_builtins
+
+#undef TARGET_BUILTIN_DECL
+#define TARGET_BUILTIN_DECL metal_builtin_decl
+
+#undef TARGET_EXPAND_BUILTIN
+#define TARGET_EXPAND_BUILTIN metal_expand_builtin
+
+#undef TARGET_ADDR_SPACE_POINTER_MODE
+#define TARGET_ADDR_SPACE_POINTER_MODE metal_addr_space_pointer_mode
+
+#undef TARGET_ADDR_SPACE_ADDRESS_MODE
+#define TARGET_ADDR_SPACE_ADDRESS_MODE metal_addr_space_address_mode
+
+#undef TARGET_ADDR_SPACE_VALID_POINTER_MODE
+#define TARGET_ADDR_SPACE_VALID_POINTER_MODE \
+  metal_addr_space_valid_pointer_mode
+
+#undef TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
+#define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P \
+  metal_addr_space_legitimate_address_p
+
+#undef TARGET_ADDR_SPACE_SUBSET_P
+#define TARGET_ADDR_SPACE_SUBSET_P metal_addr_space_subset_p
+
+#undef TARGET_ADDR_SPACE_CONVERT
+#define TARGET_ADDR_SPACE_CONVERT metal_addr_space_convert
 
 #undef TARGET_FUNCTION_ARG
 #define TARGET_FUNCTION_ARG metal_function_arg
