@@ -57,12 +57,6 @@ extern "C" {
 /* Maximum number of tracked buffer allocations per device.  */
 #define MAX_METAL_BUFFERS 4096
 
-/* Maximum number of loaded images per device.  */
-#define MAX_METAL_IMAGES 64
-
-/* Maximum number of functions (kernels) per image.  */
-#define MAX_METAL_FUNCTIONS 512
-
 /* Buffer allocation tracking entry.  */
 struct metal_buffer_entry
 {
