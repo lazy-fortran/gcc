@@ -47,12 +47,16 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <pthread.h>
+#include <dispatch/dispatch.h>
 
 /* Maximum number of Metal devices supported.  */
 #define MAX_METAL_DEVICES 8
 
 /* Maximum number of tracked buffer allocations per device.  */
 #define MAX_METAL_BUFFERS 4096
+
+/* Maximum number of loaded kernels per device.  */
+#define MAX_METAL_KERNELS 256
 
 /* Buffer allocation tracking entry.  */
 struct metal_buffer_entry
@@ -61,11 +65,37 @@ struct metal_buffer_entry
   MTL::Buffer *buffer;	/* The Metal buffer object.  */
 };
 
+/* Kernel tracking entry.  */
+struct metal_kernel_entry
+{
+  const char *name;		    /* Kernel name.  */
+  MTL::Function *function;	    /* Compiled kernel function.  */
+  MTL::ComputePipelineState *pipeline;  /* Compute pipeline state.  */
+};
+
+/* Metal offload image data structure (matches mkoffload.cc output).  */
+struct metal_image_data
+{
+  const unsigned char *data;
+  size_t size;
+};
+
+struct metal_data
+{
+  uintptr_t omp_requires_mask;
+  const struct metal_image_data *metallib;
+  const char *const *var_names;
+  unsigned var_num;
+  const char *const *fn_names;
+  unsigned fn_num;
+};
+
 /* Per-device state.  */
 struct metal_device
 {
   MTL::Device *device;
   MTL::CommandQueue *queue;
+  MTL::Library *library;	/* Loaded metallib library.  */
   char uid[64];
   char name[128];  /* Persistent copy of device name for property queries.  */
   bool initialized;
@@ -73,6 +103,10 @@ struct metal_device
   /* Buffer allocation tracking.  */
   struct metal_buffer_entry buffers[MAX_METAL_BUFFERS];
   int num_buffers;
+
+  /* Kernel tracking.  */
+  struct metal_kernel_entry kernels[MAX_METAL_KERNELS];
+  int num_kernels;
 };
 
 /* Device table.  */
@@ -115,8 +149,10 @@ metal_enumerate_devices (void)
       num_metal_devices = 1;
       metal_devices[0].device = device;
       metal_devices[0].queue = nullptr;
+      metal_devices[0].library = nullptr;
       metal_devices[0].initialized = false;
       metal_devices[0].num_buffers = 0;
+      metal_devices[0].num_kernels = 0;
 
       /* Store device name persistently (Metal string may be autoreleased).  */
       const char *name = device->name ()->utf8String ();
@@ -335,10 +371,10 @@ GOMP_OFFLOAD_version (void)
 }
 
 int
-GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
+GOMP_OFFLOAD_load_image (int ord,
 			 unsigned version,
-			 const void *target_data __attribute__((unused)),
-			 struct addr_pair **target_table __attribute__((unused)),
+			 const void *target_data,
+			 struct addr_pair **target_table,
 			 uint64_t **rev_fn_table __attribute__((unused)),
 			 uint64_t *host_ind_fn_table __attribute__((unused)))
 {
@@ -350,21 +386,157 @@ GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
       return -1;
     }
 
-  /* Metal backend not yet implemented.  When implemented, this function
-     will extract MSL code from target_data, compile it using
-     MTLDevice::newLibraryWithSource, create compute pipelines for each
-     kernel, and return kernel addresses in target_table.  */
-  GOMP_PLUGIN_error ("Metal image loading not yet implemented");
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("Invalid device ordinal %d", ord);
+      return -1;
+    }
+
+  struct metal_device *dev = &metal_devices[ord];
+  if (!dev->initialized)
+    {
+      GOMP_PLUGIN_error ("Device %d not initialized", ord);
+      return -1;
+    }
+
+  const struct metal_data *data = (const struct metal_data *) target_data;
+  if (!data || !data->metallib || !data->metallib->data)
+    {
+      GOMP_PLUGIN_error ("Invalid target data for Metal device");
+      return -1;
+    }
+
+  /* Load metallib binary into Metal library.  */
+  dispatch_data_t metallib_dispatch
+      = dispatch_data_create (data->metallib->data, data->metallib->size,
+			      nullptr, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+  if (!metallib_dispatch)
+    {
+      GOMP_PLUGIN_error ("Failed to create dispatch data for metallib");
+      return -1;
+    }
+
+  NS::Error *error = nullptr;
+  dev->library = dev->device->newLibrary (metallib_dispatch, &error);
+  dispatch_release (metallib_dispatch);
+
+  if (!dev->library)
+    {
+      if (error)
+	{
+	  const char *err_msg = error->localizedDescription ()->utf8String ();
+	  GOMP_PLUGIN_error ("Failed to load metallib: %s",
+			     err_msg ? err_msg : "unknown error");
+	}
+      else
+	GOMP_PLUGIN_error ("Failed to load metallib: unknown error");
+      return -1;
+    }
+
+  /* Create compute pipeline states for each kernel.  */
+  unsigned fn_num = data->fn_num;
+  if (fn_num > MAX_METAL_KERNELS)
+    {
+      GOMP_PLUGIN_error ("Too many kernels (%u > %d)", fn_num,
+			 MAX_METAL_KERNELS);
+      dev->library->release ();
+      dev->library = nullptr;
+      return -1;
+    }
+
+  /* Allocate target table for function pointers.  */
+  *target_table = GOMP_PLUGIN_malloc (fn_num * sizeof (struct addr_pair));
+
+  for (unsigned i = 0; i < fn_num; i++)
+    {
+      const char *kernel_name = data->fn_names[i];
+      NS::String *name_str
+	  = NS::String::string (kernel_name, NS::UTF8StringEncoding);
+
+      MTL::Function *function = dev->library->newFunction (name_str);
+      if (!function)
+	{
+	  GOMP_PLUGIN_error ("Failed to load kernel function: %s",
+			     kernel_name);
+	  goto error_cleanup;
+	}
+
+      error = nullptr;
+      MTL::ComputePipelineState *pipeline
+	  = dev->device->newComputePipelineState (function, &error);
+      if (!pipeline)
+	{
+	  if (error)
+	    {
+	      const char *err_msg
+		  = error->localizedDescription ()->utf8String ();
+	      GOMP_PLUGIN_error ("Failed to create pipeline for %s: %s",
+				 kernel_name, err_msg ? err_msg : "unknown");
+	    }
+	  else
+	    GOMP_PLUGIN_error ("Failed to create pipeline for %s",
+			       kernel_name);
+	  function->release ();
+	  goto error_cleanup;
+	}
+
+      dev->kernels[dev->num_kernels].name = kernel_name;
+      dev->kernels[dev->num_kernels].function = function;
+      dev->kernels[dev->num_kernels].pipeline = pipeline;
+      dev->num_kernels++;
+
+      (*target_table)[i].start = (uintptr_t) pipeline;
+      (*target_table)[i].end = (uintptr_t) pipeline;
+    }
+
+  return fn_num;
+
+error_cleanup:
+  for (int i = 0; i < dev->num_kernels; i++)
+    {
+      if (dev->kernels[i].pipeline)
+	dev->kernels[i].pipeline->release ();
+      if (dev->kernels[i].function)
+	dev->kernels[i].function->release ();
+    }
+  dev->num_kernels = 0;
+  dev->library->release ();
+  dev->library = nullptr;
+  GOMP_PLUGIN_free (*target_table);
+  *target_table = nullptr;
   return -1;
 }
 
 bool
-GOMP_OFFLOAD_unload_image (int ord __attribute__((unused)),
+GOMP_OFFLOAD_unload_image (int ord,
 			   unsigned version __attribute__((unused)),
 			   const void *target_data __attribute__((unused)))
 {
-  GOMP_PLUGIN_error ("Metal image unloading not yet implemented");
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    return false;
+
+  struct metal_device *dev = &metal_devices[ord];
+
+  /* Release all kernels.  */
+  for (int i = 0; i < dev->num_kernels; i++)
+    {
+      if (dev->kernels[i].pipeline)
+	dev->kernels[i].pipeline->release ();
+      if (dev->kernels[i].function)
+	dev->kernels[i].function->release ();
+    }
+  dev->num_kernels = 0;
+
+  /* Release library.  */
+  if (dev->library)
+    {
+      dev->library->release ();
+      dev->library = nullptr;
+    }
+
+  return true;
 }
 
 void *
