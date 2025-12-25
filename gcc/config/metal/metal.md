@@ -38,6 +38,12 @@
   "A pseudo register."
   (match_code "reg"))
 
+;; Unspec constants
+
+(define_c_enum "unspec" [
+   UNSPEC_COPYSIGN
+])
+
 ;; Attributes
 
 (define_attr "type"
@@ -472,6 +478,126 @@
 		(match_operand:DF 3 "metal_register_operand" "R")))]
   ""
   "// fma.f64 %0, %1, %2, %3"
+  [(set_attr "type" "fpu")])
+
+;; Integer min/max
+
+(define_insn "sminsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(smin:SI (match_operand:SI 1 "metal_register_operand" "R")
+		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// min.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "smaxsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(smax:SI (match_operand:SI 1 "metal_register_operand" "R")
+		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// max.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "uminsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(umin:SI (match_operand:SI 1 "metal_register_operand" "R")
+		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// min.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umaxsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(umax:SI (match_operand:SI 1 "metal_register_operand" "R")
+		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// max.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "smindi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(smin:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// min.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "smaxdi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(smax:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// max.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umindi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(umin:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// min.u64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umaxdi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(umax:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// max.u64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+;; Floating point min/max
+
+(define_insn "sminsf3"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(smin:SF (match_operand:SF 1 "metal_register_operand" "R")
+		 (match_operand:SF 2 "metal_register_operand" "R")))]
+  ""
+  "// min.f32 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "smaxsf3"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(smax:SF (match_operand:SF 1 "metal_register_operand" "R")
+		 (match_operand:SF 2 "metal_register_operand" "R")))]
+  ""
+  "// max.f32 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "smindf3"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(smin:DF (match_operand:DF 1 "metal_register_operand" "R")
+		 (match_operand:DF 2 "metal_register_operand" "R")))]
+  ""
+  "// min.f64 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "smaxdf3"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(smax:DF (match_operand:DF 1 "metal_register_operand" "R")
+		 (match_operand:DF 2 "metal_register_operand" "R")))]
+  ""
+  "// max.f64 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+;; Copysign
+
+(define_insn "copysignsf3"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")
+		    (match_operand:SF 2 "metal_register_operand" "R")]
+		   UNSPEC_COPYSIGN))]
+  ""
+  "// copysign.f32 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "copysigndf3"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")
+		    (match_operand:DF 2 "metal_register_operand" "R")]
+		   UNSPEC_COPYSIGN))]
+  ""
+  "// copysign.f64 %0, %1, %2"
   [(set_attr "type" "fpu")])
 
 ;; Floating point type conversions
