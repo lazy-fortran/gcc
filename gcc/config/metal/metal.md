@@ -350,6 +350,73 @@
   "// shr.u64 %0, %1, %2"
   [(set_attr "type" "alu")])
 
+;; Bit manipulation operations
+
+(define_insn "bitrevsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(bitreverse:SI (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// brev.b32 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "bitrevdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(bitreverse:DI (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// brev.b64 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "clzsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(clz:SI (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// clz.b32 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "clzdi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(clz:SI (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// clz.b64 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_expand "ctzsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "")
+	(ctz:SI (match_operand:SI 1 "metal_register_operand" "")))]
+  ""
+{
+  rtx tmpreg = gen_reg_rtx (SImode);
+  emit_insn (gen_bitrevsi2 (tmpreg, operands[1]));
+  emit_insn (gen_clzsi2 (operands[0], tmpreg));
+  DONE;
+})
+
+(define_expand "ctzdi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "")
+	(ctz:SI (match_operand:DI 1 "metal_register_operand" "")))]
+  ""
+{
+  rtx tmpreg = gen_reg_rtx (DImode);
+  emit_insn (gen_bitrevdi2 (tmpreg, operands[1]));
+  emit_insn (gen_clzdi2 (operands[0], tmpreg));
+  DONE;
+})
+
+(define_insn "popcountsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(popcount:SI (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// popc.b32 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "popcountdi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(truncate:SI
+	  (popcount:DI (match_operand:DI 1 "metal_register_operand" "R"))))]
+  ""
+  "// popc.b64 %0, %1"
+  [(set_attr "type" "alu")])
+
 ;; Floating point arithmetic
 
 (define_insn "addsf3"
