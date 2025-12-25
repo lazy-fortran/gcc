@@ -542,6 +542,28 @@ proc check_effective_target_openacc_radeon_accel_selected { } {
     return [string match "radeon" $openacc_device_type]
 }
 
+# Return 1 if at least one Metal GPU is accessible.
+
+proc check_effective_target_openacc_metal_accel_present { } {
+    return [check_runtime openacc_metal_accel_present {
+	#include <openacc.h>
+	int main () {
+	return !(acc_get_num_devices (acc_device_metal) > 0);
+	}
+    } "" ]
+}
+
+# Return 1 if at least one Metal GPU is accessible, and the OpenACC 'metal'
+# device type is selected.
+
+proc check_effective_target_openacc_metal_accel_selected { } {
+    if { ![check_effective_target_openacc_metal_accel_present] } {
+	return 0;
+    }
+    global openacc_device_type
+    return [string match "metal" $openacc_device_type]
+}
+
 # Return 1 if cuda.h and -lcuda are available.
 
 proc check_effective_target_openacc_cuda { } {
