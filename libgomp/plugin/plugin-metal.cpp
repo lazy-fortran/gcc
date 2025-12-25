@@ -1225,7 +1225,6 @@ metal_bind_kernel_arguments (MTL::ComputeCommandEncoder *enc, int ord,
     {
       enc->endEncoding ();
       cmd->release ();
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_fatal ("kernel argument buffer not found");
     }
 
