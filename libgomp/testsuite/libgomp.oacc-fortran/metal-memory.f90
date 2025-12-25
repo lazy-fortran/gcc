@@ -12,7 +12,7 @@ program metal_memory
     integer, parameter :: n = 1024
     real(dp) :: a(n), b(n)
     real(dp), allocatable :: c(:), d(:)
-    integer :: i, errors
+    integer :: i, j, errors
 
     ! Test 1: Multiple enter/exit cycles
     do i = 1, n
@@ -23,8 +23,8 @@ program metal_memory
     do i = 1, 5
         !$acc enter data copyin(a)
         !$acc parallel loop present(a)
-        do concurrent (i = 1:n)
-            b(i) = a(i) * real(i, dp)
+        do j = 1, n
+            b(j) = a(j) * real(j, dp)
         end do
         !$acc end parallel loop
         !$acc exit data delete(a)
