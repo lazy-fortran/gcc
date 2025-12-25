@@ -1,0 +1,39 @@
+; Options for the Apple Metal compiler target.
+
+; Copyright (C) 2025 Free Software Foundation, Inc.
+;
+; This file is part of GCC.
+;
+; GCC is free software; you can redistribute it and/or modify it under
+; the terms of the GNU General Public License as published by the Free
+; Software Foundation; either version 3, or (at your option) any later
+; version.
+;
+; GCC is distributed in the hope that it will be useful, but WITHOUT ANY
+; WARRANTY; without even the implied warranty of MERCHANTABILITY or
+; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+; for more details.
+;
+; You should have received a copy of the GNU General Public License
+; along with GCC; see the file COPYING3.  If not see
+; <http://www.gnu.org/licenses/>.
+
+HeaderInclude
+config/metal/metal.h
+
+; Metal Shading Language version selection
+mmsl=
+Target RejectNegative Joined Enum(msl_version) Var(metal_msl_version) Init(MSL_VERSION_2_4)
+Specify the Metal Shading Language version.
+
+Enum
+Name(msl_version) Type(enum msl_version)
+
+EnumValue
+Enum(msl_version) String(2.4) Value(MSL_VERSION_2_4)
+
+EnumValue
+Enum(msl_version) String(3.0) Value(MSL_VERSION_3_0)
+
+EnumValue
+Enum(msl_version) String(3.1) Value(MSL_VERSION_3_1)
