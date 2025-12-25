@@ -1028,7 +1028,9 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
       if (cmd->status () == MTL::CommandBufferStatusError)
 	{
 	  MTL::Error *error = cmd->error ();
-	  const char *error_msg = error ? error->localizedDescription ()->utf8String () : "unknown error";
+	  const char *error_msg = error
+	      ? error->localizedDescription ()->utf8String ()
+	      : "unknown error";
 	  pthread_mutex_unlock (&metal_lock);
 	  GOMP_PLUGIN_fatal ("Metal kernel execution failed: %s", error_msg);
 	}
