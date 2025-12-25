@@ -42,6 +42,11 @@
 
 (define_c_enum "unspec" [
    UNSPEC_COPYSIGN
+   UNSPEC_ATOMIC_CAS
+   UNSPEC_ATOMIC_EXCH
+   UNSPEC_ATOMIC_ADD
+   UNSPEC_ATOMIC_AND
+   UNSPEC_ATOMIC_OR
 ])
 
 ;; Attributes
@@ -1093,4 +1098,108 @@
 	(sign_extend:DI (match_operand:SI 1 "metal_register_operand" "R")))]
   ""
   "// cvt.s64.s32 %0, %1"
+  [(set_attr "type" "alu")])
+
+;; Atomic operations
+
+(define_insn "atomic_compare_and_swapsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")
+	   (match_operand:SI 3 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_CAS))]
+  ""
+  "// atom.cas.b32 %0, [%1], %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_compare_and_swapdi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")
+	   (match_operand:DI 3 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_CAS))]
+  ""
+  "// atom.cas.b64 %0, [%1], %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_exchangesi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_EXCH))]
+  ""
+  "// atom.exch.b32 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_exchangedi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_EXCH))]
+  ""
+  "// atom.exch.b64 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_addsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_ADD))]
+  ""
+  "// atom.add.s32 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_adddi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_ADD))]
+  ""
+  "// atom.add.s64 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_andsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_AND))]
+  ""
+  "// atom.and.b32 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_anddi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_AND))]
+  ""
+  "// atom.and.b64 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_orsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_OR))]
+  ""
+  "// atom.or.b32 %0, [%1], %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_ordi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_OR))]
+  ""
+  "// atom.or.b64 %0, [%1], %2"
   [(set_attr "type" "alu")])
