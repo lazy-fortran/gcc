@@ -323,9 +323,8 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 static void
 compile_metal (const char *msl_file, const char *metallib_file)
 {
-  const char *air_file = air_name;
-  if (!air_file)
-    air_file = make_temp_file (".air");
+  if (!air_name)
+    air_name = make_temp_file (".air");
 
   /* Compile .metal to .air.  */
   struct obstack argv_obstack;
@@ -337,7 +336,7 @@ compile_metal (const char *msl_file, const char *metallib_file)
   obstack_ptr_grow (&argv_obstack, "-c");
   obstack_ptr_grow (&argv_obstack, msl_file);
   obstack_ptr_grow (&argv_obstack, "-o");
-  obstack_ptr_grow (&argv_obstack, air_file);
+  obstack_ptr_grow (&argv_obstack, air_name);
   if (verbose)
     obstack_ptr_grow (&argv_obstack, "-v");
   obstack_ptr_grow (&argv_obstack, NULL);
@@ -360,7 +359,7 @@ compile_metal (const char *msl_file, const char *metallib_file)
   obstack_ptr_grow (&argv_obstack, "-sdk");
   obstack_ptr_grow (&argv_obstack, "macosx");
   obstack_ptr_grow (&argv_obstack, "metallib");
-  obstack_ptr_grow (&argv_obstack, air_file);
+  obstack_ptr_grow (&argv_obstack, air_name);
   obstack_ptr_grow (&argv_obstack, "-o");
   obstack_ptr_grow (&argv_obstack, metallib_file);
   if (verbose)
@@ -381,7 +380,7 @@ compile_metal (const char *msl_file, const char *metallib_file)
   obstack_free (&argv_obstack, NULL);
 
   if (!save_temps)
-    maybe_unlink (air_file);
+    maybe_unlink (air_name);
 }
 
 static void
