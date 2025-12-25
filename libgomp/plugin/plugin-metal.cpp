@@ -51,6 +51,16 @@ extern "C" {
 /* Maximum number of Metal devices supported.  */
 #define MAX_METAL_DEVICES 8
 
+/* Maximum number of tracked buffer allocations per device.  */
+#define MAX_METAL_BUFFERS 4096
+
+/* Buffer allocation tracking entry.  */
+struct metal_buffer_entry
+{
+  void *ptr;		/* Pointer returned by buffer->contents().  */
+  MTL::Buffer *buffer;	/* The Metal buffer object.  */
+};
+
 /* Per-device state.  */
 struct metal_device
 {
@@ -58,6 +68,10 @@ struct metal_device
   MTL::CommandQueue *queue;
   char uid[64];
   bool initialized;
+
+  /* Buffer allocation tracking.  */
+  struct metal_buffer_entry buffers[MAX_METAL_BUFFERS];
+  int num_buffers;
 };
 
 /* Device table.  */
@@ -89,6 +103,7 @@ metal_enumerate_devices (void)
       metal_devices[0].device = device;
       metal_devices[0].queue = nullptr;
       metal_devices[0].initialized = false;
+      metal_devices[0].num_buffers = 0;
 
       /* Store device name as UID.  */
       const char *name = device->name ()->utf8String ();
@@ -99,6 +114,42 @@ metal_enumerate_devices (void)
     num_metal_devices = 0;
 
   pthread_mutex_unlock (&metal_lock);
+}
+
+/* Add a buffer to the device's tracking table.  Returns true on success.
+   Caller must hold metal_lock.  */
+static bool
+metal_add_buffer (int ord, void *ptr, MTL::Buffer *buffer)
+{
+  struct metal_device *dev = &metal_devices[ord];
+  if (dev->num_buffers >= MAX_METAL_BUFFERS)
+    return false;
+
+  dev->buffers[dev->num_buffers].ptr = ptr;
+  dev->buffers[dev->num_buffers].buffer = buffer;
+  dev->num_buffers++;
+  return true;
+}
+
+/* Find and remove a buffer from the device's tracking table.
+   Returns the MTL::Buffer if found, nullptr otherwise.
+   Caller must hold metal_lock.  */
+static MTL::Buffer *
+metal_remove_buffer (int ord, void *ptr)
+{
+  struct metal_device *dev = &metal_devices[ord];
+  for (int i = 0; i < dev->num_buffers; i++)
+    {
+      if (dev->buffers[i].ptr == ptr)
+	{
+	  MTL::Buffer *buffer = dev->buffers[i].buffer;
+	  /* Move last entry to fill the gap.  */
+	  dev->buffers[i] = dev->buffers[dev->num_buffers - 1];
+	  dev->num_buffers--;
+	  return buffer;
+	}
+    }
+  return nullptr;
 }
 
 extern "C" {
@@ -181,6 +232,18 @@ GOMP_OFFLOAD_fini_device (int ord)
       return true;
     }
 
+  /* Release all remaining buffers for this device.  */
+  for (int i = 0; i < metal_devices[ord].num_buffers; i++)
+    {
+      if (metal_devices[ord].buffers[i].buffer)
+	{
+	  metal_devices[ord].buffers[i].buffer->release ();
+	  metal_devices[ord].buffers[i].buffer = nullptr;
+	  metal_devices[ord].buffers[i].ptr = nullptr;
+	}
+    }
+  metal_devices[ord].num_buffers = 0;
+
   if (metal_devices[ord].queue)
     {
       metal_devices[ord].queue->release ();
@@ -226,18 +289,79 @@ GOMP_OFFLOAD_unload_image (int ord __attribute__((unused)),
 }
 
 void *
-GOMP_OFFLOAD_alloc (int ord __attribute__((unused)),
-		    size_t size __attribute__((unused)))
+GOMP_OFFLOAD_alloc (int ord, size_t size)
 {
-  /* TODO: Allocate MTLBuffer.  */
-  return nullptr;
+  /* Zero-size allocations return nullptr per OpenMP specification.  */
+  if (size == 0)
+    return nullptr;
+
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    return nullptr;
+
+  pthread_mutex_lock (&metal_lock);
+
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return nullptr;
+    }
+
+  MTL::Device *device = metal_devices[ord].device;
+  if (!device)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return nullptr;
+    }
+
+  /* Use shared storage mode for unified memory on Apple Silicon.
+     This means both CPU and GPU can access the same memory directly.  */
+  MTL::Buffer *buffer = device->newBuffer (size,
+					   MTL::ResourceStorageModeShared);
+  if (!buffer)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return nullptr;
+    }
+
+  void *ptr = buffer->contents ();
+  if (!ptr)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      buffer->release ();
+      return nullptr;
+    }
+
+  if (!metal_add_buffer (ord, ptr, buffer))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      buffer->release ();
+      return nullptr;
+    }
+
+  pthread_mutex_unlock (&metal_lock);
+  return ptr;
 }
 
 bool
-GOMP_OFFLOAD_free (int ord __attribute__((unused)),
-		   void *ptr __attribute__((unused)))
+GOMP_OFFLOAD_free (int ord, void *ptr)
 {
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    return false;
+
+  if (!ptr)
+    return true;  /* Freeing nullptr is a no-op.  */
+
+  pthread_mutex_lock (&metal_lock);
+  MTL::Buffer *buffer = metal_remove_buffer (ord, ptr);
+  pthread_mutex_unlock (&metal_lock);
+
+  if (!buffer)
+    return false;  /* Buffer not found in tracking table.  */
+
+  buffer->release ();
+  return true;
 }
 
 void *
