@@ -585,6 +585,46 @@ GOMP_OFFLOAD_dev2dev (int ord, void *dst, const void *src, size_t n)
   return true;
 }
 
+bool
+GOMP_OFFLOAD_memset (int ord, void *ptr, int val, size_t count)
+{
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (!ptr)
+    {
+      GOMP_PLUGIN_error ("memset: invalid device pointer");
+      return false;
+    }
+
+  if (count == 0)
+    return true;
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
+      return false;
+    }
+
+  if (!metal_validate_device_ptr (ord, ptr, count, "memset"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+
+  /* With shared storage mode, device memory is directly accessible.
+     Hold lock during memset to prevent concurrent free.  */
+  std::memset (ptr, val, count);
+  pthread_mutex_unlock (&metal_lock);
+  return true;
+}
+
 void
 GOMP_OFFLOAD_run (int ord __attribute__((unused)),
 		  void *tgt_fn __attribute__((unused)),
