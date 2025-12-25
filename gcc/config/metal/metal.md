@@ -1314,6 +1314,88 @@
 	   (match_operand:HF 3 "metal_register_operand" "R")]))]
   ""
   "// set.%c1.f16 %0, %2, %3"
+(define_expand "cbranchdi4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DI 1 "metal_register_operand")
+			 (match_operand:DI 2 "metal_nonmemory_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
+  ""
+  "")
+
+(define_insn "*branch_di"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DI 1 "metal_register_operand" "R")
+			 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
+  ""
+  "// bra.%c0 %1, %2, %l3"
+  [(set_attr "type" "branch")])
+
+(define_expand "cbranchsf4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:SF 1 "metal_register_operand")
+			 (match_operand:SF 2 "metal_register_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
+  ""
+  "")
+
+(define_insn "*branch_sf"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:SF 1 "metal_register_operand" "R")
+			 (match_operand:SF 2 "metal_register_operand" "R")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
+  ""
+  "// bra.%c0 %1, %2, %l3"
+  [(set_attr "type" "fpu")])
+
+(define_expand "cbranchdf4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DF 1 "metal_register_operand")
+			 (match_operand:DF 2 "metal_register_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
+  ""
+  "")
+
+(define_insn "*branch_df"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DF 1 "metal_register_operand" "R")
+			 (match_operand:DF 2 "metal_register_operand" "R")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
+  ""
+  "// bra.%c0 %1, %2, %l3"
+  [(set_attr "type" "fpu")])
+
+(define_expand "cbranchhf4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:HF 1 "metal_register_operand")
+			 (match_operand:HF 2 "metal_register_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
+  ""
+  "")
+
+(define_insn "*branch_hf"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:HF 1 "metal_register_operand" "R")
+			 (match_operand:HF 2 "metal_register_operand" "R")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
+  ""
+  "// bra.%c0 %1, %2, %l3"
   [(set_attr "type" "fpu")])
 
 ;; Conditional select operations
