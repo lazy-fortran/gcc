@@ -30,12 +30,78 @@
 
 #define _GNU_SOURCE
 #include "config.h"
+
+/* metal-cpp requires these to be defined before including headers.  */
+#define NS_PRIVATE_IMPLEMENTATION
+#define MTL_PRIVATE_IMPLEMENTATION
+#include <Metal/Metal.hpp>
+#include <Foundation/Foundation.hpp>
+
+extern "C" {
 #include "libgomp-plugin.h"
 #include "gomp-constants.h"
 #include "oacc-plugin.h"
-#include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
+}
+
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <pthread.h>
+
+/* Maximum number of Metal devices supported.  */
+#define MAX_METAL_DEVICES 8
+
+/* Per-device state.  */
+struct metal_device
+{
+  MTL::Device *device;
+  MTL::CommandQueue *queue;
+  char uid[64];
+  bool initialized;
+};
+
+/* Device table.  */
+static struct metal_device metal_devices[MAX_METAL_DEVICES];
+static int num_metal_devices = -1;
+static pthread_mutex_t metal_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Initialize device enumeration (called once).  */
+static void
+metal_enumerate_devices (void)
+{
+  if (num_metal_devices >= 0)
+    return;
+
+  pthread_mutex_lock (&metal_lock);
+  if (num_metal_devices >= 0)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return;
+    }
+
+  /* Get system default device.  On Apple Silicon this is the integrated GPU.
+     MTL::CopyAllDevices() could be used to get all devices on Intel Macs
+     with discrete GPUs, but for now we only support the default device.  */
+  MTL::Device *device = MTL::CreateSystemDefaultDevice ();
+  if (device)
+    {
+      num_metal_devices = 1;
+      metal_devices[0].device = device;
+      metal_devices[0].queue = nullptr;
+      metal_devices[0].initialized = false;
+
+      /* Store device name as UID.  */
+      const char *name = device->name ()->utf8String ();
+      snprintf (metal_devices[0].uid, sizeof (metal_devices[0].uid),
+		"metal:%s", name ? name : "unknown");
+    }
+  else
+    num_metal_devices = 0;
+
+  pthread_mutex_unlock (&metal_lock);
+}
+
+extern "C" {
 
 const char *
 GOMP_OFFLOAD_get_name (void)
@@ -44,10 +110,12 @@ GOMP_OFFLOAD_get_name (void)
 }
 
 const char *
-GOMP_OFFLOAD_get_uid (int ord __attribute__((unused)))
+GOMP_OFFLOAD_get_uid (int ord)
 {
-  /* TODO: Return unique device identifier.  */
-  return "metal-0";
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    return nullptr;
+  return metal_devices[ord].uid;
 }
 
 unsigned int
@@ -65,20 +133,70 @@ GOMP_OFFLOAD_get_type (void)
 int
 GOMP_OFFLOAD_get_num_devices (unsigned int omp_requires_mask __attribute__((unused)))
 {
-  /* TODO: Enumerate Metal devices.  */
-  return 0;
+  metal_enumerate_devices ();
+  return num_metal_devices;
 }
 
 bool
-GOMP_OFFLOAD_init_device (int ord __attribute__((unused)))
+GOMP_OFFLOAD_init_device (int ord)
 {
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    return false;
+
+  pthread_mutex_lock (&metal_lock);
+  if (metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return true;
+    }
+
+  /* Create command queue for this device.  */
+  MTL::Device *device = metal_devices[ord].device;
+  MTL::CommandQueue *queue = device->newCommandQueue ();
+  if (!queue)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+
+  metal_devices[ord].queue = queue;
+  metal_devices[ord].initialized = true;
+  pthread_mutex_unlock (&metal_lock);
+
+  return true;
 }
 
 bool
-GOMP_OFFLOAD_fini_device (int ord __attribute__((unused)))
+GOMP_OFFLOAD_fini_device (int ord)
 {
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    return false;
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return true;
+    }
+
+  if (metal_devices[ord].queue)
+    {
+      metal_devices[ord].queue->release ();
+      metal_devices[ord].queue = nullptr;
+    }
+
+  if (metal_devices[ord].device)
+    {
+      metal_devices[ord].device->release ();
+      metal_devices[ord].device = nullptr;
+    }
+
+  metal_devices[ord].initialized = false;
+  pthread_mutex_unlock (&metal_lock);
+
+  return true;
 }
 
 unsigned
@@ -95,6 +213,7 @@ GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
 			 uint64_t **rev_fn_table __attribute__((unused)),
 			 uint64_t *host_ind_fn_table __attribute__((unused)))
 {
+  /* TODO: Load Metal library and extract kernels.  */
   return -1;
 }
 
@@ -110,7 +229,8 @@ void *
 GOMP_OFFLOAD_alloc (int ord __attribute__((unused)),
 		    size_t size __attribute__((unused)))
 {
-  return NULL;
+  /* TODO: Allocate MTLBuffer.  */
+  return nullptr;
 }
 
 bool
@@ -124,7 +244,7 @@ void *
 GOMP_OFFLOAD_managed_alloc (int ord __attribute__((unused)),
 			    size_t size __attribute__((unused)))
 {
-  return NULL;
+  return nullptr;
 }
 
 bool
@@ -204,7 +324,7 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *) __attribute__((unused)),
 void *
 GOMP_OFFLOAD_openacc_create_thread_data (int ord __attribute__((unused)))
 {
-  return NULL;
+  return nullptr;
 }
 
 void
@@ -215,7 +335,7 @@ GOMP_OFFLOAD_openacc_destroy_thread_data (void *data __attribute__((unused)))
 struct goacc_asyncqueue *
 GOMP_OFFLOAD_openacc_async_construct (int device __attribute__((unused)))
 {
-  return NULL;
+  return nullptr;
 }
 
 bool
@@ -288,3 +408,5 @@ GOMP_OFFLOAD_openacc_get_property (int ord __attribute__((unused)),
 
   return val;
 }
+
+} /* extern "C" */
