@@ -1312,6 +1312,94 @@
   [(set_attr "type" "fpu")])
 
 
+;; Conditional store patterns (cstore)
+;; These patterns set a register to 0 or 1 based on a comparison result
+
+(define_expand "cstoresi4"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:SI 2 "metal_register_operand")
+	   (match_operand:SI 3 "metal_nonmemory_operand")]))]
+  ""
+  "")
+
+(define_insn "*cstoresi4_insn"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:SI 2 "metal_register_operand" "R")
+	   (match_operand:SI 3 "metal_nonmemory_operand" "Ri")]))]
+  ""
+  "// set.%c1.s32 %0, %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_expand "cstoredi4"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:DI 2 "metal_register_operand")
+	   (match_operand:DI 3 "metal_nonmemory_operand")]))]
+  ""
+  "")
+
+(define_insn "*cstoredi4_insn"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:DI 2 "metal_register_operand" "R")
+	   (match_operand:DI 3 "metal_nonmemory_operand" "Ri")]))]
+  ""
+  "// set.%c1.s64 %0, %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_expand "cstoresf4"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:SF 2 "metal_register_operand")
+	   (match_operand:SF 3 "metal_register_operand")]))]
+  ""
+  "")
+
+(define_insn "*cstoresf4_insn"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:SF 2 "metal_register_operand" "R")
+	   (match_operand:SF 3 "metal_register_operand" "R")]))]
+  ""
+  "// set.%c1.f32 %0, %2, %3"
+  [(set_attr "type" "fpu")])
+
+(define_expand "cstoredf4"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:DF 2 "metal_register_operand")
+	   (match_operand:DF 3 "metal_register_operand")]))]
+  ""
+  "")
+
+(define_insn "*cstoredf4_insn"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:DF 2 "metal_register_operand" "R")
+	   (match_operand:DF 3 "metal_register_operand" "R")]))]
+  ""
+  "// set.%c1.f64 %0, %2, %3"
+  [(set_attr "type" "fpu")])
+
+(define_expand "cstorehf4"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:HF 2 "metal_register_operand")
+	   (match_operand:HF 3 "metal_register_operand")]))]
+  ""
+  "")
+
+(define_insn "*cstorehf4_insn"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(match_operator:SI 1 "comparison_operator"
+	  [(match_operand:HF 2 "metal_register_operand" "R")
+	   (match_operand:HF 3 "metal_register_operand" "R")]))]
+  ""
+  "// set.%c1.f16 %0, %2, %3"
+  [(set_attr "type" "fpu")])
+
 ;; Conditional select operations
 
 ;; Predicate to integer conversion
