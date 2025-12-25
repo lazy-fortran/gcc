@@ -61,6 +61,16 @@ struct metal_buffer_entry
   MTL::Buffer *buffer;	/* The Metal buffer object.  */
 };
 
+/* Image data tracking.  Each loaded offload image corresponds to one
+   MTL::Library containing kernel functions.  */
+struct metal_image_data
+{
+  const void *target_data;		/* Original target_data pointer.  */
+  MTL::Library *library;		/* Compiled Metal library.  */
+  void *kernel_table;			/* Allocated kernel function table.  */
+  struct metal_image_data *next;	/* Next image in linked list.  */
+};
+
 /* Per-device state.  */
 struct metal_device
 {
@@ -73,6 +83,10 @@ struct metal_device
   /* Buffer allocation tracking.  */
   struct metal_buffer_entry buffers[MAX_METAL_BUFFERS];
   int num_buffers;
+
+  /* Loaded image tracking.  */
+  struct metal_image_data *images;	/* Linked list of loaded images.  */
+  pthread_mutex_t image_lock;		/* Protects images list.  */
 };
 
 /* Device table.  */
@@ -117,6 +131,8 @@ metal_enumerate_devices (void)
       metal_devices[0].queue = nullptr;
       metal_devices[0].initialized = false;
       metal_devices[0].num_buffers = 0;
+      metal_devices[0].images = nullptr;
+      pthread_mutex_init (&metal_devices[0].image_lock, nullptr);
 
       /* Store device name persistently (Metal string may be autoreleased).  */
       const char *name = device->name ()->utf8String ();
@@ -298,6 +314,22 @@ GOMP_OFFLOAD_fini_device (int ord)
       return true;
     }
 
+  /* Release all loaded images for this device.  */
+  pthread_mutex_lock (&metal_devices[ord].image_lock);
+  struct metal_image_data *image = metal_devices[ord].images;
+  while (image)
+    {
+      struct metal_image_data *next = image->next;
+      if (image->library)
+	image->library->release ();
+      if (image->kernel_table)
+	free (image->kernel_table);
+      free (image);
+      image = next;
+    }
+  metal_devices[ord].images = nullptr;
+  pthread_mutex_unlock (&metal_devices[ord].image_lock);
+
   /* Release all remaining buffers for this device.  */
   for (int i = 0; i < metal_devices[ord].num_buffers; i++)
     {
@@ -359,12 +391,71 @@ GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
 }
 
 bool
-GOMP_OFFLOAD_unload_image (int ord __attribute__((unused)),
-			   unsigned version __attribute__((unused)),
-			   const void *target_data __attribute__((unused)))
+GOMP_OFFLOAD_unload_image (int ord, unsigned version, const void *target_data)
 {
-  GOMP_PLUGIN_error ("Metal image unloading not yet implemented");
-  return false;
+  if (GOMP_VERSION_DEV (version) != GOMP_VERSION_METAL)
+    {
+      GOMP_PLUGIN_error ("Offload data incompatible with Metal plugin"
+			 " (expected %u, received %u)",
+			 GOMP_VERSION_METAL, GOMP_VERSION_DEV (version));
+      return false;
+    }
+
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  struct metal_device *dev = &metal_devices[ord];
+  bool found = false;
+
+  /* Find and remove the image from the device's image list.  */
+  pthread_mutex_lock (&dev->image_lock);
+
+  struct metal_image_data **prev_p = &dev->images;
+  struct metal_image_data *image;
+
+  for (image = *prev_p; image != nullptr; prev_p = &image->next, image = *prev_p)
+    {
+      if (image->target_data == target_data)
+	{
+	  /* Remove from linked list.  */
+	  *prev_p = image->next;
+
+	  /* Release Metal library.  The library may still have in-flight
+	     kernels using it, but Metal's reference counting ensures the
+	     library remains valid until those kernels complete.  */
+	  if (image->library)
+	    {
+	      image->library->release ();
+	      image->library = nullptr;
+	    }
+
+	  /* Free kernel function table if allocated.  */
+	  if (image->kernel_table)
+	    {
+	      free (image->kernel_table);
+	      image->kernel_table = nullptr;
+	    }
+
+	  /* Free image structure.  */
+	  free (image);
+	  found = true;
+	  break;
+	}
+    }
+
+  pthread_mutex_unlock (&dev->image_lock);
+
+  if (!found)
+    {
+      GOMP_PLUGIN_error ("image not found for unload (target_data=%p)", target_data);
+      return false;
+    }
+
+  return true;
 }
 
 void *
