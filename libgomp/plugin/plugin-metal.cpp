@@ -625,6 +625,232 @@ GOMP_OFFLOAD_memset (int ord, void *ptr, int val, size_t count)
   return true;
 }
 
+/* Strided 2D memory copy.  With Metal's shared storage mode, both host and
+   device memory are directly accessible, so we implement this as a simple
+   row-by-row memcpy.
+
+   Parameters:
+   - dim1_size: width in bytes of the region to copy
+   - dim0_len: height (number of rows) to copy
+   - dst_offset1_size: X offset in bytes in destination
+   - dst_offset0_len: Y offset (row count) in destination
+   - dst_dim1_size: destination pitch (full row width in bytes)
+   - src_offset1_size: X offset in bytes in source
+   - src_offset0_len: Y offset (row count) in source
+   - src_dim1_size: source pitch (full row width in bytes)
+
+   Returns: 1 on success, 0 on failure, -1 to use fallback.  */
+
+int
+GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
+		       size_t dim0_len, void *dst, size_t dst_offset1_size,
+		       size_t dst_offset0_len, size_t dst_dim1_size,
+		       const void *src, size_t src_offset1_size,
+		       size_t src_offset0_len, size_t src_dim1_size)
+{
+  /* Determine which device to use for validation.  */
+  int ord = (dst_ord != -1) ? dst_ord : src_ord;
+
+  /* Both host-to-host is not our concern.  */
+  if (dst_ord == -1 && src_ord == -1)
+    return -1;
+
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("memcpy2d: invalid device ordinal %d", ord);
+      return 0;
+    }
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("memcpy2d: invalid %s pointer",
+			 !dst ? "destination" : "source");
+      return 0;
+    }
+
+  if (dim0_len == 0 || dim1_size == 0)
+    return 1;
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy2d: device %d not initialized", ord);
+      return 0;
+    }
+
+  /* Validate that the last row offset does not overflow.  */
+  size_t dst_last_row, src_last_row, dst_row_off, src_row_off;
+  if (__builtin_add_overflow (dst_offset0_len, dim0_len - 1, &dst_last_row)
+      || __builtin_mul_overflow (dst_last_row, dst_dim1_size, &dst_row_off)
+      || __builtin_add_overflow (dst_row_off, dst_offset1_size, &dst_row_off)
+      || __builtin_add_overflow (dst_row_off, dim1_size, &dst_row_off))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy2d: destination address overflow");
+      return 0;
+    }
+  if (__builtin_add_overflow (src_offset0_len, dim0_len - 1, &src_last_row)
+      || __builtin_mul_overflow (src_last_row, src_dim1_size, &src_row_off)
+      || __builtin_add_overflow (src_row_off, src_offset1_size, &src_row_off)
+      || __builtin_add_overflow (src_row_off, dim1_size, &src_row_off))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy2d: source address overflow");
+      return 0;
+    }
+
+  /* With shared storage mode, both host and device memory are directly
+     accessible.  Perform row-by-row copy with appropriate strides.  */
+  char *d = static_cast<char *>(dst);
+  const char *s = static_cast<const char *>(src);
+
+  for (size_t row = 0; row < dim0_len; row++)
+    {
+      char *dst_row = d + (dst_offset0_len + row) * dst_dim1_size
+		      + dst_offset1_size;
+      const char *src_row = s + (src_offset0_len + row) * src_dim1_size
+			    + src_offset1_size;
+      std::memcpy (dst_row, src_row, dim1_size);
+    }
+
+  pthread_mutex_unlock (&metal_lock);
+  return 1;
+}
+
+/* Strided 3D memory copy.  With Metal's shared storage mode, both host and
+   device memory are directly accessible, so we implement this as a simple
+   slice-by-slice, row-by-row memcpy.
+
+   Parameters:
+   - dim2_size: width in bytes of the region to copy (innermost)
+   - dim1_len: height (number of rows per slice) to copy
+   - dim0_len: depth (number of slices) to copy
+   - dst_offset2_size: X offset in bytes in destination
+   - dst_offset1_len: Y offset (row count) in destination
+   - dst_offset0_len: Z offset (slice count) in destination
+   - dst_dim2_size: destination row pitch (full row width in bytes)
+   - dst_dim1_len: destination slice height (rows per slice)
+   - src_offset2_size: X offset in bytes in source
+   - src_offset1_len: Y offset (row count) in source
+   - src_offset0_len: Z offset (slice count) in source
+   - src_dim2_size: source row pitch (full row width in bytes)
+   - src_dim1_len: source slice height (rows per slice)
+
+   Returns: 1 on success, 0 on failure, -1 to use fallback.  */
+
+int
+GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
+		       size_t dim1_len, size_t dim0_len, void *dst,
+		       size_t dst_offset2_size, size_t dst_offset1_len,
+		       size_t dst_offset0_len, size_t dst_dim2_size,
+		       size_t dst_dim1_len, const void *src,
+		       size_t src_offset2_size, size_t src_offset1_len,
+		       size_t src_offset0_len, size_t src_dim2_size,
+		       size_t src_dim1_len)
+{
+  /* Determine which device to use for validation.  */
+  int ord = (dst_ord != -1) ? dst_ord : src_ord;
+
+  /* Both host-to-host is not our concern.  */
+  if (dst_ord == -1 && src_ord == -1)
+    return -1;
+
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("memcpy3d: invalid device ordinal %d", ord);
+      return 0;
+    }
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("memcpy3d: invalid %s pointer",
+			 !dst ? "destination" : "source");
+      return 0;
+    }
+
+  if (dim0_len == 0 || dim1_len == 0 || dim2_size == 0)
+    return 1;
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy3d: device %d not initialized", ord);
+      return 0;
+    }
+
+  /* Calculate slice sizes with overflow check.  */
+  size_t dst_slice_size, src_slice_size;
+  if (__builtin_mul_overflow (dst_dim2_size, dst_dim1_len, &dst_slice_size))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy3d: destination slice size overflow");
+      return 0;
+    }
+  if (__builtin_mul_overflow (src_dim2_size, src_dim1_len, &src_slice_size))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy3d: source slice size overflow");
+      return 0;
+    }
+
+  /* Validate that the last element offset does not overflow.  */
+  size_t dst_last_slice, dst_last_row, dst_off, tmp;
+  if (__builtin_add_overflow (dst_offset0_len, dim0_len - 1, &dst_last_slice)
+      || __builtin_mul_overflow (dst_last_slice, dst_slice_size, &dst_off)
+      || __builtin_add_overflow (dst_offset1_len, dim1_len - 1, &dst_last_row)
+      || __builtin_mul_overflow (dst_last_row, dst_dim2_size, &tmp)
+      || __builtin_add_overflow (dst_off, tmp, &dst_off)
+      || __builtin_add_overflow (dst_off, dst_offset2_size, &dst_off)
+      || __builtin_add_overflow (dst_off, dim2_size, &dst_off))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy3d: destination address overflow");
+      return 0;
+    }
+
+  size_t src_last_slice, src_last_row, src_off;
+  if (__builtin_add_overflow (src_offset0_len, dim0_len - 1, &src_last_slice)
+      || __builtin_mul_overflow (src_last_slice, src_slice_size, &src_off)
+      || __builtin_add_overflow (src_offset1_len, dim1_len - 1, &src_last_row)
+      || __builtin_mul_overflow (src_last_row, src_dim2_size, &tmp)
+      || __builtin_add_overflow (src_off, tmp, &src_off)
+      || __builtin_add_overflow (src_off, src_offset2_size, &src_off)
+      || __builtin_add_overflow (src_off, dim2_size, &src_off))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("memcpy3d: source address overflow");
+      return 0;
+    }
+
+  /* With shared storage mode, both host and device memory are directly
+     accessible.  Perform slice-by-slice, row-by-row copy.  */
+  char *d = static_cast<char *>(dst);
+  const char *s = static_cast<const char *>(src);
+
+  for (size_t slice = 0; slice < dim0_len; slice++)
+    {
+      for (size_t row = 0; row < dim1_len; row++)
+	{
+	  char *dst_row = d
+			  + (dst_offset0_len + slice) * dst_slice_size
+			  + (dst_offset1_len + row) * dst_dim2_size
+			  + dst_offset2_size;
+	  const char *src_row = s
+				+ (src_offset0_len + slice) * src_slice_size
+				+ (src_offset1_len + row) * src_dim2_size
+				+ src_offset2_size;
+	  std::memcpy (dst_row, src_row, dim2_size);
+	}
+    }
+
+  pthread_mutex_unlock (&metal_lock);
+  return 1;
+}
+
 void
 GOMP_OFFLOAD_run (int ord __attribute__((unused)),
 		  void *tgt_fn __attribute__((unused)),
