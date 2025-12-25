@@ -877,27 +877,187 @@ GOMP_OFFLOAD_async_run (int ord __attribute__((unused)),
 
 /* OpenACC functions.  */
 
+/* Metal device limits for thread configuration.
+   Apple Silicon GPUs typically support up to 1024 threads per threadgroup.  */
+#define METAL_MAX_THREADS_PER_THREADGROUP 1024
+
+/* Execute an OpenACC kernel synchronously.
+   Maps OpenACC dimensions to Metal threadgroup configuration:
+   - gangs -> number of threadgroups (grid dimension)
+   - workers × vectors -> threads per threadgroup
+
+   Parameters:
+   - fn: kernel function descriptor (currently unused - no image loading)
+   - mapnum: number of mapped variables (unused)
+   - hostaddrs: host addresses of mapped variables (unused)
+   - devaddrs: device addresses for kernel parameters (unused)
+   - dims: OpenACC dimensions [GOMP_DIM_GANG, GOMP_DIM_WORKER, GOMP_DIM_VECTOR]
+   - targ_mem_desc: target memory descriptor (unused)
+
+   Note: This is a stub implementation until image loading is complete.
+   When image loading is implemented, this will:
+   1. Extract kernel function from fn descriptor
+   2. Create MTL::CommandBuffer
+   3. Create MTL::ComputeCommandEncoder
+   4. Set kernel arguments from devaddrs
+   5. Dispatch with Metal dimensions
+   6. Commit and synchronize  */
 void
 GOMP_OFFLOAD_openacc_exec (void (*fn) (void *) __attribute__((unused)),
 			   size_t mapnum __attribute__((unused)),
 			   void **hostaddrs __attribute__((unused)),
 			   void **devaddrs __attribute__((unused)),
-			   unsigned *dims __attribute__((unused)),
+			   unsigned *dims,
 			   void *targ_mem_desc __attribute__((unused)))
 {
-  GOMP_PLUGIN_fatal ("Metal OpenACC kernel execution not yet implemented");
+  /* Validate dimensions array.  */
+  if (!dims)
+    {
+      GOMP_PLUGIN_error ("openacc_exec: null dimensions");
+      return;
+    }
+
+  /* Extract OpenACC dimensions.
+     dims[GOMP_DIM_GANG] = number of gangs (threadgroups)
+     dims[GOMP_DIM_WORKER] = number of workers
+     dims[GOMP_DIM_VECTOR] = vector length  */
+  unsigned num_gangs = dims[GOMP_DIM_GANG];
+  unsigned num_workers = dims[GOMP_DIM_WORKER];
+  unsigned vector_length = dims[GOMP_DIM_VECTOR];
+
+  /* Map OpenACC dimensions to Metal thread configuration.
+     Metal uses:
+     - Grid size (number of threadgroups): 1D, 2D, or 3D
+     - Threadgroup size (threads per threadgroup): 1D, 2D, or 3D
+
+     OpenACC mapping:
+     - gangs -> threadgroups in X dimension
+     - workers × vectors -> threads per threadgroup
+       - workers -> threads in Y dimension
+       - vectors -> threads in X dimension  */
+  unsigned threads_per_threadgroup = num_workers * vector_length;
+
+  /* Validate thread configuration against Metal limits.  */
+  if (threads_per_threadgroup > METAL_MAX_THREADS_PER_THREADGROUP)
+    {
+      GOMP_PLUGIN_error ("openacc_exec: num_workers (%u) * vector_length (%u) "
+			 "= %u exceeds Metal limit of %u threads per threadgroup",
+			 num_workers, vector_length, threads_per_threadgroup,
+			 METAL_MAX_THREADS_PER_THREADGROUP);
+      return;
+    }
+
+  /* Compute threadgroup configuration.
+     For now, use 1D dispatch for simplicity.
+     Future optimization: use 2D/3D for better cache locality.  */
+  unsigned threadgroups = num_gangs;
+  unsigned threads = threads_per_threadgroup;
+
+  /* Debug logging for dimension mapping.  */
+  GOMP_PLUGIN_debug (0, "Metal openacc_exec: "
+		     "gangs=%u, workers=%u, vectors=%u -> "
+		     "threadgroups=%u, threads_per_threadgroup=%u\n",
+		     num_gangs, num_workers, vector_length,
+		     threadgroups, threads);
+
+  /* TODO: When image loading is implemented:
+     1. Cast fn to kernel descriptor structure
+     2. Get device ordinal from thread-local data
+     3. Create command buffer from device queue
+     4. Create compute command encoder
+     5. Set compute pipeline state for kernel
+     6. Set kernel arguments from devaddrs
+     7. Dispatch threads:
+        MTL::Size grid_size(threadgroups, 1, 1);
+        MTL::Size group_size(threads, 1, 1);
+        encoder->dispatchThreadgroups(grid_size, group_size);
+     8. End encoding
+     9. Commit command buffer
+     10. Wait for completion (synchronous execution)
+
+     For now, report that kernel execution is not implemented.  */
+  GOMP_PLUGIN_fatal ("Metal kernel execution infrastructure not yet available "
+		     "(image loading required)");
 }
 
+/* Execute an OpenACC kernel asynchronously on the specified queue.
+   Similar to openacc_exec but returns immediately without waiting
+   for kernel completion. The kernel executes asynchronously on the GPU.
+
+   Parameters:
+   - fn: kernel function descriptor
+   - mapnum: number of mapped variables (unused)
+   - hostaddrs: host addresses of mapped variables (unused)
+   - devaddrs: device addresses for kernel parameters (unused)
+   - dims: OpenACC dimensions [GOMP_DIM_GANG, GOMP_DIM_WORKER, GOMP_DIM_VECTOR]
+   - targ_mem_desc: target memory descriptor (unused)
+   - aq: async queue for kernel submission
+
+   Note: This is a stub implementation until image loading is complete.
+   When implemented, will use aq->queue for async dispatch and update
+   aq->last_cmd for tracking completion.  */
 void
 GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *) __attribute__((unused)),
 				 size_t mapnum __attribute__((unused)),
 				 void **hostaddrs __attribute__((unused)),
 				 void **devaddrs __attribute__((unused)),
-				 unsigned *dims __attribute__((unused)),
+				 unsigned *dims,
 				 void *targ_mem_desc __attribute__((unused)),
-				 struct goacc_asyncqueue *aq __attribute__((unused)))
+				 struct goacc_asyncqueue *aq)
 {
-  GOMP_PLUGIN_fatal ("Metal OpenACC async kernel execution not yet implemented");
+  /* Validate dimensions and async queue.  */
+  if (!dims)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: null dimensions");
+      return;
+    }
+  if (!aq)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: null async queue");
+      return;
+    }
+
+  /* Extract and validate OpenACC dimensions.  */
+  unsigned num_gangs = dims[GOMP_DIM_GANG];
+  unsigned num_workers = dims[GOMP_DIM_WORKER];
+  unsigned vector_length = dims[GOMP_DIM_VECTOR];
+  unsigned threads_per_threadgroup = num_workers * vector_length;
+
+  if (threads_per_threadgroup > METAL_MAX_THREADS_PER_THREADGROUP)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: num_workers (%u) * "
+			 "vector_length (%u) = %u exceeds Metal limit of %u",
+			 num_workers, vector_length, threads_per_threadgroup,
+			 METAL_MAX_THREADS_PER_THREADGROUP);
+      return;
+    }
+
+  /* Compute Metal thread configuration.  */
+  unsigned threadgroups = num_gangs;
+  unsigned threads = threads_per_threadgroup;
+
+  /* Debug logging.  */
+  GOMP_PLUGIN_debug (0, "Metal openacc_async_exec: "
+		     "gangs=%u, workers=%u, vectors=%u -> "
+		     "threadgroups=%u, threads_per_threadgroup=%u\n",
+		     num_gangs, num_workers, vector_length,
+		     threadgroups, threads);
+
+  /* TODO: When image loading is implemented:
+     1. Cast fn to kernel descriptor
+     2. Create command buffer from aq->queue
+     3. Create compute command encoder
+     4. Set compute pipeline state
+     5. Set kernel arguments from devaddrs
+     6. Dispatch threads with Metal dimensions
+     7. Signal aq->event for serialization support
+     8. End encoding
+     9. Commit command buffer (async - returns immediately)
+     10. Store command buffer in aq->last_cmd for tracking
+
+     For now, report not implemented.  */
+  GOMP_PLUGIN_fatal ("Metal async kernel execution infrastructure not yet "
+		     "available (image loading required)");
 }
 
 void *
