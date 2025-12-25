@@ -1032,6 +1032,16 @@
   [(set_attr "type" "alu")])
 
 ;; High-part multiply
+;;
+;; MSL provides the mulhi() intrinsic for computing the high-order bits
+;; of a multiply operation:
+;;   int mulhi(int a, int b);      // signed high-part: (a * b) >> 32
+;;   uint mulhi(uint a, uint b);   // unsigned high-part: (a * b) >> 32
+;;   long mulhi(long a, long b);   // signed high-part: (a * b) >> 64
+;;   ulong mulhi(ulong a, ulong b); // unsigned high-part: (a * b) >> 64
+;;
+;; The Metal compiler correctly overloads mulhi() based on operand types,
+;; so signed patterns use int/long and unsigned patterns use uint/ulong.
 
 (define_insn "smulsi3_highpart"
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
