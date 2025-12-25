@@ -379,30 +379,108 @@ GOMP_OFFLOAD_managed_free (int ord __attribute__((unused)),
 }
 
 bool
-GOMP_OFFLOAD_dev2host (int ord __attribute__((unused)),
-		       void *dst __attribute__((unused)),
-		       const void *src __attribute__((unused)),
-		       size_t n __attribute__((unused)))
+GOMP_OFFLOAD_dev2host (int ord, void *dst, const void *src, size_t n)
 {
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (n == 0)
+    return true;
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("invalid %s address",
+			 !dst ? "destination" : "source");
+      return false;
+    }
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
+      return false;
+    }
+  pthread_mutex_unlock (&metal_lock);
+
+  /* With shared storage mode on Apple Silicon, device memory is directly
+     accessible from CPU.  A simple memcpy suffices.  */
+  std::memcpy (dst, src, n);
+  return true;
 }
 
 bool
-GOMP_OFFLOAD_host2dev (int ord __attribute__((unused)),
-		       void *dst __attribute__((unused)),
-		       const void *src __attribute__((unused)),
-		       size_t n __attribute__((unused)))
+GOMP_OFFLOAD_host2dev (int ord, void *dst, const void *src, size_t n)
 {
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (n == 0)
+    return true;
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("invalid %s address",
+			 !dst ? "destination" : "source");
+      return false;
+    }
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
+      return false;
+    }
+  pthread_mutex_unlock (&metal_lock);
+
+  /* With shared storage mode on Apple Silicon, device memory is directly
+     accessible from CPU.  A simple memcpy suffices.  */
+  std::memcpy (dst, src, n);
+  return true;
 }
 
 bool
-GOMP_OFFLOAD_dev2dev (int ord __attribute__((unused)),
-		      void *dst __attribute__((unused)),
-		      const void *src __attribute__((unused)),
-		      size_t n __attribute__((unused)))
+GOMP_OFFLOAD_dev2dev (int ord, void *dst, const void *src, size_t n)
 {
-  return false;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (n == 0)
+    return true;
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("invalid %s address",
+			 !dst ? "destination" : "source");
+      return false;
+    }
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
+      return false;
+    }
+  pthread_mutex_unlock (&metal_lock);
+
+  /* Use memmove for device-to-device copies to handle overlapping regions
+     safely.  With shared storage mode, this is a CPU-side operation.  */
+  std::memmove (dst, src, n);
+  return true;
 }
 
 void
