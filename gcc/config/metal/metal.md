@@ -1389,6 +1389,58 @@
   DONE;
 })
 
+;; Stack management
+;; MSL has implicit stack management, but we provide these patterns
+;; for GCC's internal use (e.g., alloca, VLA support).
+
+(define_expand "allocate_stack"
+  [(set (match_operand:DI 0 "metal_register_operand")
+        (minus:DI (reg:DI 1)
+                  (match_operand:DI 1 "metal_register_operand")))]
+  ""
+{
+  /* Adjust stack pointer downward by operands[1] bytes.
+     Store new stack pointer in operands[0].  */
+  rtx stack_ptr = gen_rtx_REG (DImode, STACK_POINTER_REGNUM);
+  rtx size = operands[1];
+
+  /* Align size to 16 bytes for Metal ABI.  */
+  rtx aligned_size = expand_simple_binop (DImode, PLUS, size,
+                                          GEN_INT (15), NULL_RTX,
+                                          1, OPTAB_LIB_WIDEN);
+  aligned_size = expand_simple_binop (DImode, AND, aligned_size,
+                                      GEN_INT (-16), NULL_RTX,
+                                      1, OPTAB_LIB_WIDEN);
+
+  /* Subtract from stack pointer.  */
+  rtx new_sp = expand_simple_binop (DImode, MINUS, stack_ptr,
+                                    aligned_size, NULL_RTX,
+                                    1, OPTAB_LIB_WIDEN);
+  emit_move_insn (stack_ptr, new_sp);
+  emit_move_insn (operands[0], stack_ptr);
+  DONE;
+})
+
+(define_expand "save_stack_block"
+  [(set (match_operand:DI 0 "metal_register_operand")
+        (reg:DI 1))]
+  ""
+{
+  /* Save current stack pointer to operands[0].  */
+  emit_move_insn (operands[0], gen_rtx_REG (DImode, STACK_POINTER_REGNUM));
+  DONE;
+})
+
+(define_expand "restore_stack_block"
+  [(set (reg:DI 1)
+        (match_operand:DI 1 "metal_register_operand"))]
+  ""
+{
+  /* Restore stack pointer from operands[1].  */
+  emit_move_insn (gen_rtx_REG (DImode, STACK_POINTER_REGNUM), operands[1]);
+  DONE;
+})
+
 ;; Function calls
 
 (define_expand "call"
