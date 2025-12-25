@@ -72,7 +72,7 @@
   [(set (match_operand:SI 0 "metal_register_operand" "=R")
 	(match_operand:SI 1 "metal_nonmemory_operand" "Ri"))]
   ""
-  "// mov.s32 %0, %1"
+  "int %0 = %1;"
   [(set_attr "type" "move")])
 
 (define_expand "movdi"
@@ -85,7 +85,7 @@
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
 	(match_operand:DI 1 "metal_nonmemory_operand" "Ri"))]
   ""
-  "// mov.s64 %0, %1"
+  "long %0 = %1;"
   [(set_attr "type" "move")])
 
 (define_expand "movsf"
@@ -98,7 +98,7 @@
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
 	(match_operand:SF 1 "metal_register_operand" "R"))]
   ""
-  "// mov.f32 %0, %1"
+  "float %0 = %1;"
   [(set_attr "type" "move")])
 
 (define_expand "movdf"
@@ -111,7 +111,7 @@
   [(set (match_operand:DF 0 "metal_register_operand" "=R")
 	(match_operand:DF 1 "metal_register_operand" "R"))]
   ""
-  "// mov.f64 %0, %1"
+  "double %0 = %1;"
   [(set_attr "type" "move")])
 
 ;; Half-precision floating-point operations
@@ -211,7 +211,7 @@
 	(plus:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// add.s32 %0, %1, %2"
+  "int %0 = %1 + %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "adddi3"
@@ -219,7 +219,7 @@
 	(plus:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// add.s64 %0, %1, %2"
+  "long %0 = %1 + %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "subsi3"
@@ -227,7 +227,7 @@
 	(minus:SI (match_operand:SI 1 "metal_register_operand" "R")
 		  (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// sub.s32 %0, %1, %2"
+  "int %0 = %1 - %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "subdi3"
@@ -235,7 +235,7 @@
 	(minus:DI (match_operand:DI 1 "metal_register_operand" "R")
 		  (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "// sub.s64 %0, %1, %2"
+  "long %0 = %1 - %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "mulsi3"
@@ -243,7 +243,7 @@
 	(mult:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// mul.s32 %0, %1, %2"
+  "int %0 = %1 * %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "muldi3"
@@ -251,7 +251,7 @@
 	(mult:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "// mul.s64 %0, %1, %2"
+  "long %0 = %1 * %2;"
   [(set_attr "type" "alu")])
 
 ;; Multiply-accumulate operations
@@ -339,7 +339,7 @@
 	(div:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// div.s32 %0, %1, %2"
+  "int %0 = %1 / %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "udivsi3"
@@ -347,7 +347,7 @@
 	(udiv:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "// div.u32 %0, %1, %2"
+  "uint %0 = %1 / %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "modsi3"

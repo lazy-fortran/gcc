@@ -132,19 +132,77 @@ metal_legitimate_address_p (machine_mode, rtx, bool, code_helper)
   return true;
 }
 
+/* Return MSL type string for machine mode.  */
+
+static const char *
+metal_msl_type_from_mode (machine_mode mode)
+{
+  switch (mode)
+    {
+    case E_QImode: return "char";
+    case E_HImode: return "short";
+    case E_SImode: return "int";
+    case E_DImode: return "long";
+    case E_HFmode: return "half";
+    case E_SFmode: return "float";
+    case E_DFmode: return "double";
+    case E_V2SImode: return "int2";
+    case E_V4SImode: return "int4";
+    case E_V2SFmode: return "float2";
+    case E_V4SFmode: return "float4";
+    default:
+      gcc_unreachable ();
+    }
+}
+
 /* Implement PRINT_OPERAND.  */
 
 void
 metal_print_operand (FILE *file, rtx x, int code)
 {
-  if (code == 0)
+  switch (code)
     {
+    case 0:
+      /* Default: print operand value.  */
       if (REG_P (x))
 	fprintf (file, "r%d", REGNO (x));
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
+      else if (CONST_DOUBLE_P (x))
+	{
+	  long val[2];
+	  if (GET_MODE (x) == SFmode)
+	    {
+	      REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x),
+					   val[0]);
+	      fprintf (file, "0x%08lx", val[0]);
+	    }
+	  else if (GET_MODE (x) == DFmode)
+	    {
+	      REAL_VALUE_TO_TARGET_DOUBLE (*CONST_DOUBLE_REAL_VALUE (x), val);
+	      fprintf (file, "0x%08lx%08lx", val[1], val[0]);
+	    }
+	}
       else
 	output_addr_const (file, x);
+      break;
+
+    case 't':
+      /* Print type suffix for mode.  */
+      fprintf (file, "%s", metal_msl_type_from_mode (GET_MODE (x)));
+      break;
+
+    case 'T':
+      /* Print type for explicit mode in operand.  */
+      {
+	machine_mode mode = GET_MODE (x);
+	fprintf (file, "%s", metal_msl_type_from_mode (mode));
+      }
+      break;
+
+    default:
+      output_operand_lossage ("invalid %%xn code");
+      break;
     }
 }
 
@@ -153,7 +211,102 @@ metal_print_operand (FILE *file, rtx x, int code)
 void
 metal_print_operand_address (FILE *file, rtx addr)
 {
-  output_addr_const (file, addr);
+  if (REG_P (addr))
+    fprintf (file, "r%d", REGNO (addr));
+  else if (GET_CODE (addr) == PLUS)
+    {
+      rtx base = XEXP (addr, 0);
+      rtx offset = XEXP (addr, 1);
+      if (REG_P (base) && CONST_INT_P (offset))
+	{
+	  fprintf (file, "r%d", REGNO (base));
+	  HOST_WIDE_INT off = INTVAL (offset);
+	  if (off != 0)
+	    fprintf (file, " + " HOST_WIDE_INT_PRINT_DEC, off);
+	}
+      else
+	output_addr_const (file, addr);
+    }
+  else
+    output_addr_const (file, addr);
+}
+
+/* Output MSL code for move instruction.  */
+
+const char *
+metal_output_mov_insn (rtx dst, rtx src)
+{
+  machine_mode mode = GET_MODE (dst);
+  static char buf[128];
+
+  /* Generate MSL variable declaration and assignment.  */
+  snprintf (buf, sizeof (buf), "%s %%0 = %%1",
+	    metal_msl_type_from_mode (mode));
+  return buf;
+}
+
+/* Output MSL code for binary arithmetic operation.  */
+
+const char *
+metal_output_binop_insn (const char *msl_op, rtx *operands)
+{
+  machine_mode mode = GET_MODE (operands[0]);
+  static char buf[128];
+
+  snprintf (buf, sizeof (buf), "%s %%0 = %%1 %s %%2",
+	    metal_msl_type_from_mode (mode), msl_op);
+  return buf;
+}
+
+/* Output MSL code for unary operation.  */
+
+const char *
+metal_output_unop_insn (const char *msl_op, rtx *operands)
+{
+  machine_mode mode = GET_MODE (operands[0]);
+  static char buf[128];
+
+  snprintf (buf, sizeof (buf), "%s %%0 = %s%%1",
+	    metal_msl_type_from_mode (mode), msl_op);
+  return buf;
+}
+
+/* Output MSL code for comparison operation.  */
+
+const char *
+metal_output_cmp_insn (const char *msl_op, rtx *operands)
+{
+  static char buf[128];
+
+  snprintf (buf, sizeof (buf), "bool %%0 = (%%1 %s %%2)", msl_op);
+  return buf;
+}
+
+/* Output MSL code for load operation.  */
+
+const char *
+metal_output_load_insn (rtx dst, rtx src)
+{
+  machine_mode mode = GET_MODE (dst);
+  static char buf[128];
+
+  snprintf (buf, sizeof (buf), "%s %%0 = *(%s*)%%1",
+	    metal_msl_type_from_mode (mode),
+	    metal_msl_type_from_mode (mode));
+  return buf;
+}
+
+/* Output MSL code for store operation.  */
+
+const char *
+metal_output_store_insn (rtx dst, rtx src)
+{
+  machine_mode mode = GET_MODE (src);
+  static char buf[128];
+
+  snprintf (buf, sizeof (buf), "*(%s*)%%0 = %%1",
+	    metal_msl_type_from_mode (mode));
+  return buf;
 }
 
 /* Implement TARGET_ASM_FILE_START.  */

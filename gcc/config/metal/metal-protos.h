@@ -24,4 +24,12 @@ extern void metal_cpu_cpp_builtins (void);
 extern void metal_print_operand (FILE *, rtx, int);
 extern void metal_print_operand_address (FILE *, rtx);
 
+/* MSL code generation functions.  */
+extern const char *metal_output_mov_insn (rtx, rtx);
+extern const char *metal_output_binop_insn (const char *, rtx *);
+extern const char *metal_output_unop_insn (const char *, rtx *);
+extern const char *metal_output_cmp_insn (const char *, rtx *);
+extern const char *metal_output_load_insn (rtx, rtx);
+extern const char *metal_output_store_insn (rtx, rtx);
+
 #endif /* GCC_METAL_PROTOS_H */
