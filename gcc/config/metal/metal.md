@@ -20,6 +20,19 @@
 ;; Minimal machine description for Metal target.
 ;; This is a skeleton - actual MSL code generation requires expansion.
 
+;; Metal target type assumptions (64-bit macOS/Apple Silicon):
+;; QI = 8-bit (char/uchar)
+;; HI = 16-bit (short/ushort)
+;; SI = 32-bit (int/uint or float)
+;; DI = 64-bit (long/ulong - NOT int64_t, platform-dependent)
+;; HF = 16-bit (half precision float, requires Metal 2.0+)
+;; SF = 32-bit (float)
+;; DF = 64-bit (double, requires Metal 2.0+)
+;;
+;; WARNING: MSL long/ulong are implementation-defined.
+;; This backend assumes 64-bit Metal (macOS).
+;; iOS targets may have different long sizes.
+
 ;; Predicates
 
 (define_predicate "metal_register_operand"
@@ -1206,6 +1219,11 @@
   [(set_attr "type" "fpu")])
 
 ;; Comparison and branches
+
+;; NOTE: Branch patterns with goto are RTL output templates.
+;; MSL does not support goto statements.
+;; The Metal code generator must lower these to structured
+;; if/else control flow during final code emission.
 
 (define_expand "cbranchsi4"
   [(set (pc)
