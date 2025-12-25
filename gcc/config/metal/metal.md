@@ -159,6 +159,84 @@
   "// mul.s64 %0, %1, %2"
   [(set_attr "type" "alu")])
 
+;; Multiply-accumulate operations
+
+;; Integer MAD: (a * b) + c
+(define_insn "*maddsi4"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+        (plus:SI (mult:SI (match_operand:SI 1 "metal_register_operand" "R")
+                          (match_operand:SI 2 "metal_register_operand" "R"))
+                 (match_operand:SI 3 "metal_register_operand" "R")))]
+  ""
+  "// mad.lo.s32 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_insn "*madddi4"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+        (plus:DI (mult:DI (match_operand:DI 1 "metal_register_operand" "R")
+                          (match_operand:DI 2 "metal_register_operand" "R"))
+                 (match_operand:DI 3 "metal_register_operand" "R")))]
+  ""
+  "// mad.lo.s64 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+;; Unsigned MAD
+(define_insn "*umaddsi4"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+        (plus:SI (mult:SI (match_operand:SI 1 "metal_register_operand" "R")
+                          (match_operand:SI 2 "metal_register_operand" "R"))
+                 (match_operand:SI 3 "metal_register_operand" "R")))]
+  ""
+  "// mad.lo.u32 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_insn "*umadddi4"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+        (plus:DI (mult:DI (match_operand:DI 1 "metal_register_operand" "R")
+                          (match_operand:DI 2 "metal_register_operand" "R"))
+                 (match_operand:DI 3 "metal_register_operand" "R")))]
+  ""
+  "// mad.lo.u64 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+;; Multiply-subtract: (a * b) - c
+(define_insn "*msubsi4"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+        (minus:SI (mult:SI (match_operand:SI 1 "metal_register_operand" "R")
+                           (match_operand:SI 2 "metal_register_operand" "R"))
+                  (match_operand:SI 3 "metal_register_operand" "R")))]
+  ""
+  "// msub.lo.s32 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_insn "*msubdi4"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+        (minus:DI (mult:DI (match_operand:DI 1 "metal_register_operand" "R")
+                           (match_operand:DI 2 "metal_register_operand" "R"))
+                  (match_operand:DI 3 "metal_register_operand" "R")))]
+  ""
+  "// msub.lo.s64 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+;; Unsigned MSUB
+(define_insn "*umsubsi4"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+        (minus:SI (mult:SI (match_operand:SI 1 "metal_register_operand" "R")
+                           (match_operand:SI 2 "metal_register_operand" "R"))
+                  (match_operand:SI 3 "metal_register_operand" "R")))]
+  ""
+  "// msub.lo.u32 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
+(define_insn "*umsubdi4"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+        (minus:DI (mult:DI (match_operand:DI 1 "metal_register_operand" "R")
+                           (match_operand:DI 2 "metal_register_operand" "R"))
+                  (match_operand:DI 3 "metal_register_operand" "R")))]
+  ""
+  "// msub.lo.u64 %0, %1, %2, %3"
+  [(set_attr "type" "alu")])
+
 ;; Division and modulo
 
 (define_insn "divsi3"
