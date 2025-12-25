@@ -1262,7 +1262,7 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
 	    unsigned *dims, MTL::CommandQueue *queue,
 	    struct goacc_asyncqueue *aq, MTL::CommandBuffer **cmd_out)
 {
-  if (!fn_desc || !fn_desc->pso)
+  if (!fn_desc || !fn_desc->pipeline)
     GOMP_PLUGIN_fatal ("invalid kernel descriptor");
 
   metal_enumerate_devices ();
@@ -1307,7 +1307,7 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
     }
 
   /* Set compute pipeline state and bind arguments.  */
-  enc->setComputePipelineState (fn_desc->pso);
+  enc->setComputePipelineState (fn_desc->pipeline);
   metal_bind_kernel_arguments (enc, ord, dp, cmd);
 
   /* Configure thread execution and dispatch.  */
