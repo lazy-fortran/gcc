@@ -39,13 +39,6 @@
 #include "collect-utils.h"
 #include "gomp-constants.h"
 
-#ifndef GOMP_DEVICE_METAL
-#define GOMP_DEVICE_METAL 99  /* TODO: Add to gomp-constants.h */
-#endif
-#ifndef GOMP_VERSION_METAL
-#define GOMP_VERSION_METAL 1
-#endif
-
 const char tool_name[] = "metal mkoffload";
 
 #define COMMENT_PREFIX "//"
