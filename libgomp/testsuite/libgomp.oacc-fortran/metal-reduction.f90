@@ -1,5 +1,5 @@
 ! { dg-do run }
-! { dg-skip-if "Metal not available" { ! openacc_metal_selected } }
+! { dg-skip-if "Metal not available" { ! openacc_metal_accel_selected } }
 ! { dg-additional-options "-fopenacc" }
 
 ! Test Metal reduction operations
