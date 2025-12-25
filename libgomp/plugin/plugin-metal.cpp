@@ -67,6 +67,7 @@ struct metal_device
   MTL::Device *device;
   MTL::CommandQueue *queue;
   char uid[64];
+  char name[128];  /* Persistent copy of device name for property queries.  */
   bool initialized;
 
   /* Buffer allocation tracking.  */
@@ -115,10 +116,12 @@ metal_enumerate_devices (void)
       metal_devices[0].initialized = false;
       metal_devices[0].num_buffers = 0;
 
-      /* Store device name as UID.  */
+      /* Store device name persistently (Metal string may be autoreleased).  */
       const char *name = device->name ()->utf8String ();
+      snprintf (metal_devices[0].name, sizeof (metal_devices[0].name),
+		"%s", name ? name : "unknown");
       snprintf (metal_devices[0].uid, sizeof (metal_devices[0].uid),
-		"metal:%s", name ? name : "unknown");
+		"metal:%s", metal_devices[0].name);
     }
   else
     num_metal_devices = 0;
@@ -714,42 +717,153 @@ GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *aq,
 }
 
 bool
-GOMP_OFFLOAD_openacc_async_host2dev (int ord __attribute__((unused)),
-				     void *dst __attribute__((unused)),
-				     const void *src __attribute__((unused)),
-				     size_t n __attribute__((unused)),
+GOMP_OFFLOAD_openacc_async_host2dev (int ord, void *dst, const void *src,
+				     size_t n,
 				     struct goacc_asyncqueue *aq __attribute__((unused)))
 {
-  return false;
+  /* With shared storage mode on Apple Silicon, the memory is unified.
+     Async transfers are effectively synchronous memcpy operations since
+     both CPU and GPU access the same physical memory.  The async queue
+     is not used for the actual copy - it would only be relevant if we
+     needed to schedule the copy as a GPU operation.
+
+     Note: We don't check device initialization here because with unified
+     memory, the dst pointer validity is independent of device state.
+     If the device wasn't initialized, GOMP_OFFLOAD_alloc would have failed
+     and dst would be invalid - which we catch via the null check.  */
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (n == 0)
+    return true;
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("invalid %s address",
+			 !dst ? "destination" : "source");
+      return false;
+    }
+
+  std::memcpy (dst, src, n);
+  return true;
 }
 
 bool
-GOMP_OFFLOAD_openacc_async_dev2host (int ord __attribute__((unused)),
-				     void *dst __attribute__((unused)),
-				     const void *src __attribute__((unused)),
-				     size_t n __attribute__((unused)),
+GOMP_OFFLOAD_openacc_async_dev2host (int ord, void *dst, const void *src,
+				     size_t n,
 				     struct goacc_asyncqueue *aq __attribute__((unused)))
 {
-  return false;
+  /* With shared storage mode, async dev2host is a synchronous memcpy.
+     See async_host2dev for rationale on skipping device init check.  */
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (n == 0)
+    return true;
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("invalid %s address",
+			 !dst ? "destination" : "source");
+      return false;
+    }
+
+  std::memcpy (dst, src, n);
+  return true;
 }
 
 bool
-GOMP_OFFLOAD_openacc_async_dev2dev (int ord __attribute__((unused)),
-				    void *dst __attribute__((unused)),
-				    const void *src __attribute__((unused)),
-				    size_t n __attribute__((unused)),
+GOMP_OFFLOAD_openacc_async_dev2dev (int ord, void *dst, const void *src,
+				    size_t n,
 				    struct goacc_asyncqueue *aq __attribute__((unused)))
 {
-  return false;
+  /* With shared storage mode, async dev2dev is a synchronous memmove.
+     See async_host2dev for rationale on skipping device init check.  */
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  if (n == 0)
+    return true;
+
+  if (!dst || !src)
+    {
+      GOMP_PLUGIN_error ("invalid %s address",
+			 !dst ? "destination" : "source");
+      return false;
+    }
+
+  std::memmove (dst, src, n);
+  return true;
 }
 
 union goacc_property_value
-GOMP_OFFLOAD_openacc_get_property (int ord __attribute__((unused)),
-				   enum goacc_property prop __attribute__((unused)))
+GOMP_OFFLOAD_openacc_get_property (int ord, enum goacc_property prop)
 {
-  union goacc_property_value val = { .val = 0 };
+  union goacc_property_value propval = { .val = 0 };
 
-  return val;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d for property query", ord);
+      return propval;
+    }
+
+  pthread_mutex_lock (&metal_lock);
+
+  if (!metal_devices[ord].device)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d has no Metal device", ord);
+      return propval;
+    }
+
+  MTL::Device *device = metal_devices[ord].device;
+
+  switch (prop)
+    {
+    case GOACC_PROPERTY_MEMORY:
+      /* Return recommended working set size as total memory.
+	 This is the optimal size for GPU workloads on this device.  */
+      propval.val = device->recommendedMaxWorkingSetSize ();
+      break;
+
+    case GOACC_PROPERTY_FREE_MEMORY:
+      /* Metal doesn't provide a direct API for free memory.
+	 Return 0 to indicate "unknown" per OpenACC spec.  */
+      propval.val = 0;
+      break;
+
+    case GOACC_PROPERTY_NAME:
+      /* Return the persistent device name stored during enumeration.  */
+      propval.ptr = const_cast<char *>(metal_devices[ord].name);
+      break;
+
+    case GOACC_PROPERTY_VENDOR:
+      propval.ptr = const_cast<char *>("Apple");
+      break;
+
+    case GOACC_PROPERTY_DRIVER:
+      propval.ptr = const_cast<char *>("Metal");
+      break;
+
+    default:
+      break;
+    }
+
+  pthread_mutex_unlock (&metal_lock);
+  return propval;
 }
 
 } /* extern "C" */
