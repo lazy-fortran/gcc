@@ -935,7 +935,15 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *) __attribute__((unused)),
      - workers × vectors -> threads per threadgroup
        - workers -> threads in Y dimension
        - vectors -> threads in X dimension  */
-  unsigned threads_per_threadgroup = num_workers * vector_length;
+  unsigned threads_per_threadgroup;
+  if (__builtin_mul_overflow (num_workers, vector_length,
+			      &threads_per_threadgroup))
+    {
+      GOMP_PLUGIN_error ("openacc_exec: num_workers (%u) * vector_length (%u) "
+			 "causes integer overflow",
+			 num_workers, vector_length);
+      return;
+    }
 
   /* Validate thread configuration against Metal limits.  */
   if (threads_per_threadgroup > METAL_MAX_THREADS_PER_THREADGROUP)
@@ -1021,12 +1029,21 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *) __attribute__((unused)),
   unsigned num_gangs = dims[GOMP_DIM_GANG];
   unsigned num_workers = dims[GOMP_DIM_WORKER];
   unsigned vector_length = dims[GOMP_DIM_VECTOR];
-  unsigned threads_per_threadgroup = num_workers * vector_length;
+  unsigned threads_per_threadgroup;
+  if (__builtin_mul_overflow (num_workers, vector_length,
+			      &threads_per_threadgroup))
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: num_workers (%u) * "
+			 "vector_length (%u) causes integer overflow",
+			 num_workers, vector_length);
+      return;
+    }
 
   if (threads_per_threadgroup > METAL_MAX_THREADS_PER_THREADGROUP)
     {
       GOMP_PLUGIN_error ("openacc_async_exec: num_workers (%u) * "
-			 "vector_length (%u) = %u exceeds Metal limit of %u",
+			 "vector_length (%u) = %u exceeds Metal limit of %u "
+			 "threads per threadgroup",
 			 num_workers, vector_length, threads_per_threadgroup,
 			 METAL_MAX_THREADS_PER_THREADGROUP);
       return;
