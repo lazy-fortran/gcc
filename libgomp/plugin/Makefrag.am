@@ -73,7 +73,8 @@ if PLUGIN_METAL
 libgomp_plugin_metal_version_info = -version-info $(libtool_VERSION)
 toolexeclib_LTLIBRARIES += libgomp-plugin-metal.la
 libgomp_plugin_metal_la_SOURCES = plugin/plugin-metal.cpp
-libgomp_plugin_metal_la_CPPFLAGS = $(AM_CPPFLAGS)
+libgomp_plugin_metal_la_CPPFLAGS = $(AM_CPPFLAGS) \
+	-I$(srcdir)/plugin/metal-cpp
 libgomp_plugin_metal_la_CXXFLAGS = $(AM_CXXFLAGS) -std=c++17
 libgomp_plugin_metal_la_LDFLAGS = $(libgomp_plugin_metal_version_info) \
 	$(lt_host_flags) -framework Metal -framework Foundation
