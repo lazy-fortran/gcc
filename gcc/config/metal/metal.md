@@ -47,6 +47,11 @@
    UNSPEC_ATOMIC_ADD
    UNSPEC_ATOMIC_AND
    UNSPEC_ATOMIC_OR
+   UNSPEC_LOG2
+   UNSPEC_EXP2
+   UNSPEC_SIN
+   UNSPEC_COS
+   UNSPEC_RSQRT
 ])
 
 ;; Attributes
@@ -550,6 +555,88 @@
 		(match_operand:DF 3 "metal_register_operand" "R")))]
   ""
   "// fma.f64 %0, %1, %2, %3"
+  [(set_attr "type" "fpu")])
+
+;; Floating-point special functions
+
+(define_insn "log2sf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
+		   UNSPEC_LOG2))]
+  ""
+  "// lg2.approx.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "log2df2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
+		   UNSPEC_LOG2))]
+  ""
+  "// lg2.approx.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "exp2sf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
+		   UNSPEC_EXP2))]
+  ""
+  "// ex2.approx.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "exp2df2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
+		   UNSPEC_EXP2))]
+  ""
+  "// ex2.approx.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "sinsf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
+		   UNSPEC_SIN))]
+  ""
+  "// sin.approx.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "sindf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
+		   UNSPEC_SIN))]
+  ""
+  "// sin.approx.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "cossf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
+		   UNSPEC_COS))]
+  ""
+  "// cos.approx.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "cosdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
+		   UNSPEC_COS))]
+  ""
+  "// cos.approx.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "rsqrtsf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unspec:SF [(match_operand:SF 1 "metal_register_operand" "R")]
+		   UNSPEC_RSQRT))]
+  ""
+  "// rsqrt.approx.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "rsqrtdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unspec:DF [(match_operand:DF 1 "metal_register_operand" "R")]
+		   UNSPEC_RSQRT))]
+  ""
+  "// rsqrt.approx.f64 %0, %1"
   [(set_attr "type" "fpu")])
 
 ;; Integer min/max
