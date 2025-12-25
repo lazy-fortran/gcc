@@ -53,6 +53,7 @@ enum metal_builtins
   METAL_BUILTIN_THREAD_POSITION_IN_GRID,
   METAL_BUILTIN_THREADGROUP_POSITION_IN_GRID,
   METAL_BUILTIN_THREAD_POSITION_IN_THREADGROUP,
+  METAL_BUILTIN_THREADS_PER_THREADGROUP,
   METAL_BUILTIN_THREADGROUP_BARRIER,
   METAL_BUILTIN_MAX
 };
@@ -126,6 +127,8 @@ metal_init_builtins (void)
        (UINT, UINT, NULL_TREE));
   DEF (THREAD_POSITION_IN_THREADGROUP, "thread_position_in_threadgroup",
        (UINT, UINT, NULL_TREE));
+  DEF (THREADS_PER_THREADGROUP, "threads_per_threadgroup",
+       (UINT, UINT, NULL_TREE));
   DEF (THREADGROUP_BARRIER, "threadgroup_barrier", (VOID, VOID, NULL_TREE));
 
 #undef DEF
@@ -161,10 +164,13 @@ metal_expand_builtin (tree exp, rtx target, rtx ARG_UNUSED (subtarget),
     case METAL_BUILTIN_THREAD_POSITION_IN_GRID:
     case METAL_BUILTIN_THREADGROUP_POSITION_IN_GRID:
     case METAL_BUILTIN_THREAD_POSITION_IN_THREADGROUP:
-    case METAL_BUILTIN_THREADGROUP_BARRIER:
+    case METAL_BUILTIN_THREADS_PER_THREADGROUP:
       if (!target || !register_operand (target, mode))
 	target = gen_reg_rtx (mode);
       return target;
+    case METAL_BUILTIN_THREADGROUP_BARRIER:
+      /* Void builtin - no return value, just emit barrier.  */
+      return const0_rtx;
     default:
       gcc_unreachable ();
     }
@@ -229,8 +235,17 @@ metal_addr_space_subset_p (addr_space_t subset, addr_space_t superset)
 static rtx
 metal_addr_space_convert (rtx op, tree from_type, tree to_type)
 {
-  addr_space_t from_as = TYPE_ADDR_SPACE (TREE_TYPE (from_type));
-  addr_space_t to_as = TYPE_ADDR_SPACE (TREE_TYPE (to_type));
+  if (!from_type || !to_type)
+    return op;
+
+  tree from_tree_type = TREE_TYPE (from_type);
+  tree to_tree_type = TREE_TYPE (to_type);
+
+  if (!from_tree_type || !to_tree_type)
+    return op;
+
+  addr_space_t from_as = TYPE_ADDR_SPACE (from_tree_type);
+  addr_space_t to_as = TYPE_ADDR_SPACE (to_tree_type);
 
   if (from_as == to_as)
     return op;
@@ -293,10 +308,32 @@ metal_static_chain (const_tree, bool)
 /* Implement TARGET_LEGITIMATE_ADDRESS_P.  */
 
 static bool
-metal_legitimate_address_p (machine_mode, rtx, bool, code_helper)
+metal_legitimate_address_p (machine_mode mode, rtx x, bool strict,
+			    code_helper)
 {
-  /* For now, accept all addresses.  */
-  return true;
+  /* Basic address validation for Metal address spaces.  */
+  if (REG_P (x))
+    return true;
+
+  if (CONST_INT_P (x))
+    return true;
+
+  if (GET_CODE (x) == PLUS)
+    {
+      rtx op0 = XEXP (x, 0);
+      rtx op1 = XEXP (x, 1);
+
+      if (REG_P (op0) && CONST_INT_P (op1))
+	return true;
+
+      if (REG_P (op1) && CONST_INT_P (op0))
+	return true;
+    }
+
+  if (GET_CODE (x) == SYMBOL_REF || GET_CODE (x) == LABEL_REF)
+    return true;
+
+  return false;
 }
 
 /* Implement PRINT_OPERAND.  */
@@ -321,6 +358,25 @@ void
 metal_print_operand_address (FILE *file, rtx addr)
 {
   output_addr_const (file, addr);
+}
+
+/* Check if a function should be emitted as a kernel.  */
+
+static bool
+metal_write_as_kernel (tree attrs)
+{
+  return lookup_attribute ("kernel", attrs) != NULL_TREE;
+}
+
+/* Implement ASM_DECLARE_FUNCTION_NAME.  Emit [[kernel]] attribute
+   for functions marked with the kernel attribute.  */
+
+void
+metal_declare_function_name (FILE *file, const char *name, tree decl)
+{
+  if (metal_write_as_kernel (DECL_ATTRIBUTES (decl)))
+    fprintf (file, "[[kernel]] ");
+  fprintf (file, "void %s", name);
 }
 
 /* Implement TARGET_ASM_FILE_START.  */

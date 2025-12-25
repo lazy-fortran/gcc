@@ -186,6 +186,9 @@ struct metal_args {
 #define ASM_OUTPUT_LABELREF(FILE, NAME) \
   fputs (NAME, FILE)
 
+#define ASM_DECLARE_FUNCTION_NAME(FILE, NAME, DECL) \
+  metal_declare_function_name (FILE, NAME, DECL)
+
 #define GLOBAL_ASM_OP "// .global "
 
 #define DWARF2_ASM_LINE_DEBUG_INFO 0
