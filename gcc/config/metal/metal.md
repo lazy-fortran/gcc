@@ -352,7 +352,7 @@
 	(div:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 / %2;"
+  "%0 = (int)%1 / (int)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "udivsi3"
@@ -360,7 +360,7 @@
 	(udiv:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 / %2;"
+  "%0 = (uint)%1 / (uint)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "modsi3"
@@ -368,7 +368,7 @@
 	(mod:SI (match_operand:SI 1 "metal_register_operand" "R")
 		(match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 % %2;"
+  "%0 = (int)%1 % (int)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "umodsi3"
@@ -376,7 +376,7 @@
 	(umod:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 % %2;"
+  "%0 = (uint)%1 % (uint)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "divdi3"
@@ -384,7 +384,7 @@
 	(div:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 / %2;"
+  "%0 = (long)%1 / (long)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "udivdi3"
@@ -392,7 +392,7 @@
 	(udiv:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 / %2;"
+  "%0 = (ulong)%1 / (ulong)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "moddi3"
@@ -400,7 +400,7 @@
 	(mod:DI (match_operand:DI 1 "metal_register_operand" "R")
 		(match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 % %2;"
+  "%0 = (long)%1 % (long)%2;"
   [(set_attr "type" "alu")])
 
 (define_insn "umoddi3"
@@ -408,7 +408,7 @@
 	(umod:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_register_operand" "R")))]
   ""
-  "%0 = %1 % %2;"
+  "%0 = (ulong)%1 % (ulong)%2;"
   [(set_attr "type" "alu")])
 
 ;; Unary arithmetic
