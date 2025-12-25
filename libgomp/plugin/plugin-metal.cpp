@@ -334,13 +334,25 @@ GOMP_OFFLOAD_version (void)
 
 int
 GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
-			 unsigned version __attribute__((unused)),
+			 unsigned version,
 			 const void *target_data __attribute__((unused)),
 			 struct addr_pair **target_table __attribute__((unused)),
 			 uint64_t **rev_fn_table __attribute__((unused)),
 			 uint64_t *host_ind_fn_table __attribute__((unused)))
 {
-  /* TODO: Load Metal library and extract kernels.  */
+  if (GOMP_VERSION_DEV (version) != GOMP_VERSION_METAL)
+    {
+      GOMP_PLUGIN_error ("Offload data incompatible with Metal plugin"
+			 " (expected %u, received %u)",
+			 GOMP_VERSION_METAL, GOMP_VERSION_DEV (version));
+      return -1;
+    }
+
+  /* Metal backend not yet implemented.  When implemented, this function
+     will extract MSL code from target_data, compile it using
+     MTLDevice::newLibraryWithSource, create compute pipelines for each
+     kernel, and return kernel addresses in target_table.  */
+  GOMP_PLUGIN_error ("Metal image loading not yet implemented");
   return -1;
 }
 
