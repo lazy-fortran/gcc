@@ -140,6 +140,210 @@
   "// mul.s32 %0, %1, %2"
   [(set_attr "type" "alu")])
 
+(define_insn "muldi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(mult:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// mul.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+;; Division and modulo
+
+(define_insn "divsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(div:SI (match_operand:SI 1 "metal_register_operand" "R")
+		(match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// div.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "udivsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(udiv:SI (match_operand:SI 1 "metal_register_operand" "R")
+		 (match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// div.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "modsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(mod:SI (match_operand:SI 1 "metal_register_operand" "R")
+		(match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// rem.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umodsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(umod:SI (match_operand:SI 1 "metal_register_operand" "R")
+		 (match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// rem.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "divdi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(div:DI (match_operand:DI 1 "metal_register_operand" "R")
+		(match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// div.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "udivdi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(udiv:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// div.u64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "moddi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(mod:DI (match_operand:DI 1 "metal_register_operand" "R")
+		(match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// rem.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umoddi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(umod:DI (match_operand:DI 1 "metal_register_operand" "R")
+		 (match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// rem.u64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+;; Unary arithmetic
+
+(define_insn "negsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(neg:SI (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// neg.s32 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "negdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(neg:DI (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// neg.s64 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "one_cmplsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(not:SI (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// not.b32 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "one_cmpldi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(not:DI (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// not.b64 %0, %1"
+  [(set_attr "type" "alu")])
+
+;; Logical operations
+
+(define_insn "andsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(and:SI (match_operand:SI 1 "metal_register_operand" "R")
+		(match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// and.b32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "anddi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(and:DI (match_operand:DI 1 "metal_register_operand" "R")
+		(match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// and.b64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "iorsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(ior:SI (match_operand:SI 1 "metal_register_operand" "R")
+		(match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// or.b32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "iordi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(ior:DI (match_operand:DI 1 "metal_register_operand" "R")
+		(match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// or.b64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "xorsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(xor:SI (match_operand:SI 1 "metal_register_operand" "R")
+		(match_operand:SI 2 "metal_register_operand" "R")))]
+  ""
+  "// xor.b32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "xordi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(xor:DI (match_operand:DI 1 "metal_register_operand" "R")
+		(match_operand:DI 2 "metal_register_operand" "R")))]
+  ""
+  "// xor.b64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+;; Shift operations
+
+(define_insn "ashlsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(ashift:SI (match_operand:SI 1 "metal_register_operand" "R")
+		   (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// shl.b32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "ashldi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(ashift:DI (match_operand:DI 1 "metal_register_operand" "R")
+		   (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// shl.b64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "ashrsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(ashiftrt:SI (match_operand:SI 1 "metal_register_operand" "R")
+		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// shr.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "ashrdi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(ashiftrt:DI (match_operand:DI 1 "metal_register_operand" "R")
+		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// shr.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "lshrsi3"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(lshiftrt:SI (match_operand:SI 1 "metal_register_operand" "R")
+		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// shr.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "lshrdi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(lshiftrt:DI (match_operand:DI 1 "metal_register_operand" "R")
+		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// shr.u64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
 ;; Floating point arithmetic
 
 (define_insn "addsf3"
