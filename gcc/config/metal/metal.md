@@ -822,6 +822,115 @@
   "// bra.%c0 %1, %2, %l3"
   [(set_attr "type" "branch")])
 
+;; Conditional select operations
+
+;; Predicate to integer conversion
+(define_insn "zero_extendbisi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(zero_extend:SI
+	 (match_operand:BI 1 "metal_register_operand" "R")))]
+  ""
+  "// selp.s32 %0, 1, 0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "zero_extendbidi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(zero_extend:DI
+	 (match_operand:BI 1 "metal_register_operand" "R")))]
+  ""
+  "// selp.s64 %0, 1, 0, %1"
+  [(set_attr "type" "alu")])
+
+;; Conditional select - select if predicate true (ne 0)
+(define_insn "*sel_truesi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(if_then_else:SI
+	  (ne (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:SI 2 "metal_nonmemory_operand" "Ri")
+	  (match_operand:SI 3 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// selp.s32 %0, %2, %3, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "*sel_truedi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(if_then_else:DI
+	  (ne (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:DI 2 "metal_nonmemory_operand" "Ri")
+	  (match_operand:DI 3 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// selp.s64 %0, %2, %3, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "*sel_truesf"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(if_then_else:SF
+	  (ne (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:SF 2 "metal_register_operand" "R")
+	  (match_operand:SF 3 "metal_register_operand" "R")))]
+  ""
+  "// selp.f32 %0, %2, %3, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "*sel_truedf"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(if_then_else:DF
+	  (ne (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:DF 2 "metal_register_operand" "R")
+	  (match_operand:DF 3 "metal_register_operand" "R")))]
+  ""
+  "// selp.f64 %0, %2, %3, %1"
+  [(set_attr "type" "fpu")])
+
+;; Conditional select - select if predicate false (eq 0)
+(define_insn "*sel_falsesi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(if_then_else:SI
+	  (eq (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:SI 2 "metal_nonmemory_operand" "Ri")
+	  (match_operand:SI 3 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// selp.s32 %0, %3, %2, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "*sel_falsedi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(if_then_else:DI
+	  (eq (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:DI 2 "metal_nonmemory_operand" "Ri")
+	  (match_operand:DI 3 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// selp.s64 %0, %3, %2, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "*sel_falsesf"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(if_then_else:SF
+	  (eq (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:SF 2 "metal_register_operand" "R")
+	  (match_operand:SF 3 "metal_register_operand" "R")))]
+  ""
+  "// selp.f32 %0, %3, %2, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "*sel_falsedf"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(if_then_else:DF
+	  (eq (match_operand:BI 1 "metal_register_operand" "R")
+	      (const_int 0))
+	  (match_operand:DF 2 "metal_register_operand" "R")
+	  (match_operand:DF 3 "metal_register_operand" "R")))]
+  ""
+  "// selp.f64 %0, %3, %2, %1"
+  [(set_attr "type" "fpu")])
+
 ;; Jump
 
 (define_insn "jump"
