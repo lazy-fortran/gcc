@@ -49,6 +49,7 @@ module openacc_kinds
   integer (acc_device_kind), parameter :: acc_device_not_host = 4
   integer (acc_device_kind), parameter :: acc_device_nvidia = 5
   integer (acc_device_kind), parameter :: acc_device_radeon = 8
+  integer (acc_device_kind), parameter :: acc_device_metal = 9
 
   integer, parameter :: acc_device_property_kind = int32
   ! OpenACC 2.6/2.7/3.0 used acc_device_property; in a spec update the
@@ -837,6 +838,7 @@ module openacc
   public :: acc_device_kind
   public :: acc_device_none, acc_device_default, acc_device_host
   public :: acc_device_not_host, acc_device_nvidia, acc_device_radeon
+  public :: acc_device_metal
 
   public :: acc_device_property_kind, acc_device_property
   public :: acc_property_memory, acc_property_free_memory
