@@ -92,6 +92,16 @@ struct goacc_asyncqueue
   pthread_mutex_t mutex;	/* Protects last_cmd, event, event_value.  */
 };
 
+/* Kernel function descriptor.  Created by GOMP_OFFLOAD_load_image,
+   passed to openacc_async_exec as the fn parameter.  */
+struct metal_kernel_descriptor
+{
+  MTL::ComputePipelineState *pipeline;	/* Compiled kernel pipeline.  */
+  const char *name;			/* Kernel name for debugging.  */
+  unsigned default_dims[3];		/* Default launch dimensions.  */
+  size_t threadgroup_memory_length;	/* Threadgroup memory requirement.  */
+};
+
 /* Initialize device enumeration (called once).  */
 static void
 metal_enumerate_devices (void)
@@ -889,15 +899,77 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *) __attribute__((unused)),
 }
 
 void
-GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *) __attribute__((unused)),
+GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
 				 size_t mapnum __attribute__((unused)),
 				 void **hostaddrs __attribute__((unused)),
-				 void **devaddrs __attribute__((unused)),
-				 unsigned *dims __attribute__((unused)),
+				 void **devaddrs,
+				 unsigned *dims,
 				 void *targ_mem_desc __attribute__((unused)),
-				 struct goacc_asyncqueue *aq __attribute__((unused)))
+				 struct goacc_asyncqueue *aq)
 {
-  GOMP_PLUGIN_fatal ("Metal OpenACC async kernel execution not yet implemented");
+  if (!fn)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: null function pointer");
+      return;
+    }
+
+  if (!aq)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: null async queue");
+      return;
+    }
+
+  if (!dims)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: null dimensions");
+      return;
+    }
+
+  if (!devaddrs)
+    {
+      GOMP_PLUGIN_error ("openacc_async_exec: null device addresses");
+      return;
+    }
+
+  /* When GOMP_OFFLOAD_load_image is implemented, this will execute kernels.
+     Current status: kernel loading infrastructure not yet implemented.
+
+     Complete implementation will:
+     1. Cast fn to struct metal_kernel_descriptor *
+     2. Create command buffer from aq->queue
+     3. Create compute command encoder
+     4. Set pipeline state from descriptor
+     5. Set buffer arguments from devaddrs array
+     6. Calculate threadgroup configuration from dims:
+        - Gang dimension maps to number of threadgroups
+        - Worker and vector dimensions map to threads per threadgroup
+     7. Dispatch threadgroups to GPU
+     8. End encoding
+     9. Signal aq->event for GPU-side synchronization (async_serialize)
+     10. Commit command buffer without waiting
+     11. Update aq->last_cmd for async_test/async_synchronize
+
+     Example Metal dispatch pattern:
+       MTL::CommandBuffer *cmd = aq->queue->commandBuffer();
+       MTL::ComputeCommandEncoder *encoder = cmd->computeCommandEncoder();
+       encoder->setComputePipelineState(kernel->pipeline);
+       encoder->setBuffer(devaddrs[0], 0, 0);  // First kernel argument
+       MTL::Size gridSize = MTL::Size::Make(dims[GOMP_DIM_GANG], 1, 1);
+       MTL::Size threadgroupSize = MTL::Size::Make(
+           dims[GOMP_DIM_VECTOR], dims[GOMP_DIM_WORKER], 1);
+       encoder->dispatchThreadgroups(gridSize, threadgroupSize);
+       encoder->endEncoding();
+       metal_async_queue_signal(aq, cmd);
+       cmd->commit();
+       pthread_mutex_lock(&aq->mutex);
+       if (aq->last_cmd) aq->last_cmd->release();
+       aq->last_cmd = cmd;
+       aq->last_cmd->retain();
+       pthread_mutex_unlock(&aq->mutex);
+  */
+
+  GOMP_PLUGIN_fatal ("Metal OpenACC async kernel execution requires "
+		     "GOMP_OFFLOAD_load_image implementation");
 }
 
 void *
