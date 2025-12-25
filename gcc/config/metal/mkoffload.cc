@@ -318,14 +318,10 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   free (CONST_CAST (char *, input));
 }
 
-/* Compile MSL to metallib using Metal toolchain.
-   TODO: This function will be integrated when the Metal backend generates
-   actual MSL code. Currently unused as we generate placeholder MSL in the
-   C source output directly.  */
+/* Compile MSL to metallib using Metal toolchain.  */
 
 static void
-compile_metal (const char *msl_file ATTRIBUTE_UNUSED,
-	       const char *metallib_file ATTRIBUTE_UNUSED)
+compile_metal (const char *msl_file, const char *metallib_file)
 {
   const char *air_file = air_name;
   if (!air_file)
