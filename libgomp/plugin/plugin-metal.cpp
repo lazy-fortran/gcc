@@ -361,6 +361,7 @@ GOMP_OFFLOAD_unload_image (int ord __attribute__((unused)),
 			   unsigned version __attribute__((unused)),
 			   const void *target_data __attribute__((unused)))
 {
+  GOMP_PLUGIN_error ("Metal image unloading not yet implemented");
   return false;
 }
 
@@ -444,6 +445,7 @@ void *
 GOMP_OFFLOAD_managed_alloc (int ord __attribute__((unused)),
 			    size_t size __attribute__((unused)))
 {
+  GOMP_PLUGIN_error ("Metal managed allocation not yet implemented");
   return nullptr;
 }
 
@@ -451,6 +453,7 @@ bool
 GOMP_OFFLOAD_managed_free (int ord __attribute__((unused)),
 			   void *ptr __attribute__((unused)))
 {
+  GOMP_PLUGIN_error ("Metal managed free not yet implemented");
   return false;
 }
 
@@ -857,6 +860,7 @@ GOMP_OFFLOAD_run (int ord __attribute__((unused)),
 		  void *tgt_vars __attribute__((unused)),
 		  void **args __attribute__((unused)))
 {
+  GOMP_PLUGIN_fatal ("Metal kernel execution not yet implemented");
 }
 
 void
@@ -866,6 +870,7 @@ GOMP_OFFLOAD_async_run (int ord __attribute__((unused)),
 			void **args __attribute__((unused)),
 			void *async_data __attribute__((unused)))
 {
+  GOMP_PLUGIN_fatal ("Metal async kernel execution not yet implemented");
 }
 
 /* OpenACC functions.  */
@@ -878,6 +883,7 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *) __attribute__((unused)),
 			   unsigned *dims __attribute__((unused)),
 			   void *targ_mem_desc __attribute__((unused)))
 {
+  GOMP_PLUGIN_fatal ("Metal OpenACC kernel execution not yet implemented");
 }
 
 void
@@ -889,6 +895,7 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *) __attribute__((unused)),
 				 void *targ_mem_desc __attribute__((unused)),
 				 struct goacc_asyncqueue *aq __attribute__((unused)))
 {
+  GOMP_PLUGIN_fatal ("Metal OpenACC async kernel execution not yet implemented");
 }
 
 void *
