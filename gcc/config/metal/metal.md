@@ -647,6 +647,81 @@
   "// max.f64 %0, %1, %2"
   [(set_attr "type" "fpu")])
 
+;; Integer absolute value
+
+(define_insn "abssi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(abs:SI (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// abs.s32 %0, %1"
+  [(set_attr "type" "alu")])
+
+(define_insn "absdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(abs:DI (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// abs.s64 %0, %1"
+  [(set_attr "type" "alu")])
+
+;; Wide multiply (SI x SI -> DI)
+
+(define_insn "mulsidi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(mult:DI (sign_extend:DI
+		  (match_operand:SI 1 "metal_register_operand" "R"))
+		 (sign_extend:DI
+		  (match_operand:SI 2 "metal_register_operand" "R"))))]
+  ""
+  "// mul.wide.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umulsidi3"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(mult:DI (zero_extend:DI
+		  (match_operand:SI 1 "metal_register_operand" "R"))
+		 (zero_extend:DI
+		  (match_operand:SI 2 "metal_register_operand" "R"))))]
+  ""
+  "// mul.wide.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+;; High-part multiply
+
+(define_insn "smulsi3_highpart"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(smul_highpart:SI
+	  (match_operand:SI 1 "metal_register_operand" "R")
+	  (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// mul.hi.s32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umulsi3_highpart"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(umul_highpart:SI
+	  (match_operand:SI 1 "metal_register_operand" "R")
+	  (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// mul.hi.u32 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "smuldi3_highpart"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(smul_highpart:DI
+	  (match_operand:DI 1 "metal_register_operand" "R")
+	  (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// mul.hi.s64 %0, %1, %2"
+  [(set_attr "type" "alu")])
+
+(define_insn "umuldi3_highpart"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(umul_highpart:DI
+	  (match_operand:DI 1 "metal_register_operand" "R")
+	  (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
+  ""
+  "// mul.hi.u64 %0, %1, %2"
+  [(set_attr "type" "alu")])
 ;; Copysign
 
 (define_insn "copysignsf3"
