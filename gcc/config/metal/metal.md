@@ -58,8 +58,10 @@
    UNSPEC_ATOMIC_CAS
    UNSPEC_ATOMIC_EXCH
    UNSPEC_ATOMIC_ADD
+   UNSPEC_ATOMIC_SUB
    UNSPEC_ATOMIC_AND
    UNSPEC_ATOMIC_OR
+   UNSPEC_ATOMIC_XOR
    UNSPEC_LOG2
    UNSPEC_EXP2
    UNSPEC_SIN
@@ -1911,4 +1913,146 @@
 	  UNSPEC_ATOMIC_OR))]
   ""
   "%0 = atomic_fetch_or_explicit((device atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_subsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_SUB))]
+  ""
+  "%0 = atomic_fetch_sub_explicit((device atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_subdi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_SUB))]
+  ""
+  "%0 = atomic_fetch_sub_explicit((device atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_xorsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_XOR))]
+  ""
+  "%0 = atomic_fetch_xor_explicit((device atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "atomic_fetch_xordi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_XOR))]
+  ""
+  "%0 = atomic_fetch_xor_explicit((device atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+;; Threadgroup (shared memory) atomic operations
+
+(define_insn "threadgroup_atomic_fetch_addsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_ADD))]
+  ""
+  "%0 = atomic_fetch_add_explicit((threadgroup atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_adddi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_ADD))]
+  ""
+  "%0 = atomic_fetch_add_explicit((threadgroup atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_subsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_SUB))]
+  ""
+  "%0 = atomic_fetch_sub_explicit((threadgroup atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_subdi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_SUB))]
+  ""
+  "%0 = atomic_fetch_sub_explicit((threadgroup atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_andsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_AND))]
+  ""
+  "%0 = atomic_fetch_and_explicit((threadgroup atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_anddi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_AND))]
+  ""
+  "%0 = atomic_fetch_and_explicit((threadgroup atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_orsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_OR))]
+  ""
+  "%0 = atomic_fetch_or_explicit((threadgroup atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_ordi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_OR))]
+  ""
+  "%0 = atomic_fetch_or_explicit((threadgroup atomic_long*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_xorsi"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unspec_volatile:SI
+	  [(match_operand:SI 1 "memory_operand" "m")
+	   (match_operand:SI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_XOR))]
+  ""
+  "%0 = atomic_fetch_xor_explicit((threadgroup atomic_int*)%1, %2, memory_order_relaxed);"
+  [(set_attr "type" "alu")])
+
+(define_insn "threadgroup_atomic_fetch_xordi"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unspec_volatile:DI
+	  [(match_operand:DI 1 "memory_operand" "m")
+	   (match_operand:DI 2 "metal_register_operand" "R")]
+	  UNSPEC_ATOMIC_XOR))]
+  ""
+  "%0 = atomic_fetch_xor_explicit((threadgroup atomic_long*)%1, %2, memory_order_relaxed);"
   [(set_attr "type" "alu")])
