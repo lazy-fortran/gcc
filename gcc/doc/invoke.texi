@@ -22428,6 +22428,7 @@ platform.
 * M32R/D Options::
 * M680x0 Options::
 * MCore Options::
+* Metal Options::
 * MicroBlaze Options::
 * MIPS Options::
 * MMIX Options::
@@ -29724,6 +29725,27 @@ values can increase the speed of programs that contain functions
 that need a large amount of stack space, but they can also trigger a
 segmentation fault if the stack is extended too much.  The default
 value is 0x1000.
+
+@end table
+
+@node Metal Options
+@subsection Metal Options
+@cindex Metal Options
+
+These options are defined for the Apple Metal offload target.
+
+The Metal target is configured as @samp{metal-*-*} and is used for
+offloading computations to Apple GPUs via OpenMP and OpenACC.
+
+@table @gcctabopt
+
+@opindex mmsl
+@item -mmsl=@var{version}
+Specify the Metal Shading Language version to target.  Valid values are
+@samp{2.4}, @samp{3.0}, and @samp{3.1}.  The default is @samp{2.4}.
+
+This option controls which Metal features and syntax are available when
+generating Metal Shading Language code for GPU execution.
 
 @end table
 
