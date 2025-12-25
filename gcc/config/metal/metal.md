@@ -394,6 +394,218 @@
   "// mul.f64 %0, %1, %2"
   [(set_attr "type" "fpu")])
 
+(define_insn "divsf3"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(div:SF (match_operand:SF 1 "metal_register_operand" "R")
+		(match_operand:SF 2 "metal_register_operand" "R")))]
+  ""
+  "// div.f32 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+(define_insn "divdf3"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(div:DF (match_operand:DF 1 "metal_register_operand" "R")
+		(match_operand:DF 2 "metal_register_operand" "R")))]
+  ""
+  "// div.f64 %0, %1, %2"
+  [(set_attr "type" "fpu")])
+
+;; Floating point unary operations
+
+(define_insn "negsf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(neg:SF (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// neg.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "negdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(neg:DF (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// neg.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "abssf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(abs:SF (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// abs.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "absdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(abs:DF (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// abs.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "sqrtsf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(sqrt:SF (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// sqrt.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "sqrtdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(sqrt:DF (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// sqrt.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+;; Fused multiply-add
+
+(define_insn "fmasf4"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(fma:SF (match_operand:SF 1 "metal_register_operand" "R")
+		(match_operand:SF 2 "metal_register_operand" "R")
+		(match_operand:SF 3 "metal_register_operand" "R")))]
+  ""
+  "// fma.f32 %0, %1, %2, %3"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fmadf4"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(fma:DF (match_operand:DF 1 "metal_register_operand" "R")
+		(match_operand:DF 2 "metal_register_operand" "R")
+		(match_operand:DF 3 "metal_register_operand" "R")))]
+  ""
+  "// fma.f64 %0, %1, %2, %3"
+  [(set_attr "type" "fpu")])
+
+;; Floating point type conversions
+
+(define_insn "extendsfdf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(float_extend:DF (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f64.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "truncdfsf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(float_truncate:SF (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f32.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatsisf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(float:SF (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f32.s32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatsidf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(float:DF (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f64.s32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatdisf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(float:SF (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f32.s64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatdidf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(float:DF (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f64.s64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fix_truncsfsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(fix:SI (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s32.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fix_truncdfsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(fix:SI (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s32.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fix_truncsfdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(fix:DI (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s64.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fix_truncdfdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(fix:DI (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.s64.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+;; Unsigned integer to float conversions
+
+(define_insn "floatunssisf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unsigned_float:SF (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f32.u32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatunssidf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unsigned_float:DF (match_operand:SI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f64.u32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatunsdisf2"
+  [(set (match_operand:SF 0 "metal_register_operand" "=R")
+	(unsigned_float:SF (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f32.u64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "floatunsdidf2"
+  [(set (match_operand:DF 0 "metal_register_operand" "=R")
+	(unsigned_float:DF (match_operand:DI 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.f64.u64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+;; Float to unsigned integer conversions
+
+(define_insn "fixuns_truncsfsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unsigned_fix:SI (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u32.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fixuns_truncdfsi2"
+  [(set (match_operand:SI 0 "metal_register_operand" "=R")
+	(unsigned_fix:SI (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u32.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fixuns_truncsfdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unsigned_fix:DI (match_operand:SF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u64.f32 %0, %1"
+  [(set_attr "type" "fpu")])
+
+(define_insn "fixuns_truncdfdi2"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(unsigned_fix:DI (match_operand:DF 1 "metal_register_operand" "R")))]
+  ""
+  "// cvt.u64.f64 %0, %1"
+  [(set_attr "type" "fpu")])
+
 ;; Comparison and branches
 
 (define_expand "cbranchsi4"
