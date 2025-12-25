@@ -165,6 +165,57 @@ metal_remove_buffer (int ord, void *ptr)
   return nullptr;
 }
 
+/* Find a buffer that contains the given pointer within its bounds.
+   Returns the MTL::Buffer if found, nullptr otherwise.
+   Caller must hold metal_lock.  */
+static MTL::Buffer *
+metal_find_buffer (int ord, const void *ptr)
+{
+  struct metal_device *dev = &metal_devices[ord];
+  uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+
+  for (int i = 0; i < dev->num_buffers; i++)
+    {
+      uintptr_t buf_start = reinterpret_cast<uintptr_t>(dev->buffers[i].ptr);
+      uintptr_t buf_end = buf_start + dev->buffers[i].buffer->length ();
+      if (addr >= buf_start && addr < buf_end)
+	return dev->buffers[i].buffer;
+    }
+  return nullptr;
+}
+
+/* Validate that a device pointer with the given size fits within a registered
+   Metal buffer.  Returns true if valid, false with error message if not.
+   Caller must hold metal_lock.  */
+static bool
+metal_validate_device_ptr (int ord, const void *ptr, size_t n,
+			   const char *direction)
+{
+  MTL::Buffer *buffer = metal_find_buffer (ord, ptr);
+  if (!buffer)
+    {
+      GOMP_PLUGIN_error ("%s: device pointer %p is not a registered Metal buffer",
+			 direction, ptr);
+      return false;
+    }
+
+  uintptr_t buf_start = reinterpret_cast<uintptr_t>(buffer->contents ());
+  size_t buf_len = buffer->length ();
+  uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+
+  /* Calculate offset within buffer and check bounds without overflow.  */
+  size_t offset = addr - buf_start;
+  if (n > buf_len - offset)
+    {
+      GOMP_PLUGIN_error ("%s: transfer of %zu bytes at %p exceeds buffer bounds "
+			 "(buffer size %zu, offset %zu)", direction, n, ptr,
+			 buf_len, offset);
+      return false;
+    }
+
+  return true;
+}
+
 extern "C" {
 
 const char *
@@ -401,15 +452,15 @@ GOMP_OFFLOAD_dev2host (int ord, void *dst, const void *src, size_t n)
       return false;
     }
 
-  if (n == 0)
-    return true;
-
   if (!dst || !src)
     {
       GOMP_PLUGIN_error ("invalid %s address",
 			 !dst ? "destination" : "source");
       return false;
     }
+
+  if (n == 0)
+    return true;
 
   pthread_mutex_lock (&metal_lock);
   if (!metal_devices[ord].initialized)
@@ -418,11 +469,18 @@ GOMP_OFFLOAD_dev2host (int ord, void *dst, const void *src, size_t n)
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
-  pthread_mutex_unlock (&metal_lock);
+
+  /* Validate source is within a registered Metal buffer.  */
+  if (!metal_validate_device_ptr (ord, src, n, "dev2host"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
 
   /* With shared storage mode on Apple Silicon, device memory is directly
-     accessible from CPU.  A simple memcpy suffices.  */
+     accessible from CPU.  Hold lock during copy to prevent concurrent free.  */
   std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_lock);
   return true;
 }
 
@@ -436,15 +494,15 @@ GOMP_OFFLOAD_host2dev (int ord, void *dst, const void *src, size_t n)
       return false;
     }
 
-  if (n == 0)
-    return true;
-
   if (!dst || !src)
     {
       GOMP_PLUGIN_error ("invalid %s address",
 			 !dst ? "destination" : "source");
       return false;
     }
+
+  if (n == 0)
+    return true;
 
   pthread_mutex_lock (&metal_lock);
   if (!metal_devices[ord].initialized)
@@ -453,11 +511,18 @@ GOMP_OFFLOAD_host2dev (int ord, void *dst, const void *src, size_t n)
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
-  pthread_mutex_unlock (&metal_lock);
+
+  /* Validate destination is within a registered Metal buffer.  */
+  if (!metal_validate_device_ptr (ord, dst, n, "host2dev"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
 
   /* With shared storage mode on Apple Silicon, device memory is directly
-     accessible from CPU.  A simple memcpy suffices.  */
+     accessible from CPU.  Hold lock during copy to prevent concurrent free.  */
   std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_lock);
   return true;
 }
 
@@ -471,15 +536,15 @@ GOMP_OFFLOAD_dev2dev (int ord, void *dst, const void *src, size_t n)
       return false;
     }
 
-  if (n == 0)
-    return true;
-
   if (!dst || !src)
     {
       GOMP_PLUGIN_error ("invalid %s address",
 			 !dst ? "destination" : "source");
       return false;
     }
+
+  if (n == 0)
+    return true;
 
   pthread_mutex_lock (&metal_lock);
   if (!metal_devices[ord].initialized)
@@ -488,11 +553,23 @@ GOMP_OFFLOAD_dev2dev (int ord, void *dst, const void *src, size_t n)
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
-  pthread_mutex_unlock (&metal_lock);
+
+  /* Validate both source and destination are within registered Metal buffers.  */
+  if (!metal_validate_device_ptr (ord, src, n, "dev2dev source"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+  if (!metal_validate_device_ptr (ord, dst, n, "dev2dev destination"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
 
   /* Use memmove for device-to-device copies to handle overlapping regions
-     safely.  With shared storage mode, this is a CPU-side operation.  */
+     safely.  Hold lock during copy to prevent concurrent free.  */
   std::memmove (dst, src, n);
+  pthread_mutex_unlock (&metal_lock);
   return true;
 }
 
@@ -725,21 +802,13 @@ GOMP_OFFLOAD_openacc_async_host2dev (int ord, void *dst, const void *src,
      Async transfers are effectively synchronous memcpy operations since
      both CPU and GPU access the same physical memory.  The async queue
      is not used for the actual copy - it would only be relevant if we
-     needed to schedule the copy as a GPU operation.
-
-     Note: We don't check device initialization here because with unified
-     memory, the dst pointer validity is independent of device state.
-     If the device wasn't initialized, GOMP_OFFLOAD_alloc would have failed
-     and dst would be invalid - which we catch via the null check.  */
+     needed to schedule the copy as a GPU operation.  */
   metal_enumerate_devices ();
   if (ord < 0 || ord >= num_metal_devices)
     {
       GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
       return false;
     }
-
-  if (n == 0)
-    return true;
 
   if (!dst || !src)
     {
@@ -748,7 +817,19 @@ GOMP_OFFLOAD_openacc_async_host2dev (int ord, void *dst, const void *src,
       return false;
     }
 
+  if (n == 0)
+    return true;
+
+  /* Validate destination and perform copy under lock to prevent concurrent free.  */
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_validate_device_ptr (ord, dst, n, "async_host2dev"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+
   std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_lock);
   return true;
 }
 
@@ -757,17 +838,13 @@ GOMP_OFFLOAD_openacc_async_dev2host (int ord, void *dst, const void *src,
 				     size_t n,
 				     struct goacc_asyncqueue *aq __attribute__((unused)))
 {
-  /* With shared storage mode, async dev2host is a synchronous memcpy.
-     See async_host2dev for rationale on skipping device init check.  */
+  /* With shared storage mode, async dev2host is a synchronous memcpy.  */
   metal_enumerate_devices ();
   if (ord < 0 || ord >= num_metal_devices)
     {
       GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
       return false;
     }
-
-  if (n == 0)
-    return true;
 
   if (!dst || !src)
     {
@@ -776,7 +853,19 @@ GOMP_OFFLOAD_openacc_async_dev2host (int ord, void *dst, const void *src,
       return false;
     }
 
+  if (n == 0)
+    return true;
+
+  /* Validate source and perform copy under lock to prevent concurrent free.  */
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_validate_device_ptr (ord, src, n, "async_dev2host"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+
   std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_lock);
   return true;
 }
 
@@ -785,17 +874,13 @@ GOMP_OFFLOAD_openacc_async_dev2dev (int ord, void *dst, const void *src,
 				    size_t n,
 				    struct goacc_asyncqueue *aq __attribute__((unused)))
 {
-  /* With shared storage mode, async dev2dev is a synchronous memmove.
-     See async_host2dev for rationale on skipping device init check.  */
+  /* With shared storage mode, async dev2dev is a synchronous memmove.  */
   metal_enumerate_devices ();
   if (ord < 0 || ord >= num_metal_devices)
     {
       GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
       return false;
     }
-
-  if (n == 0)
-    return true;
 
   if (!dst || !src)
     {
@@ -804,7 +889,24 @@ GOMP_OFFLOAD_openacc_async_dev2dev (int ord, void *dst, const void *src,
       return false;
     }
 
+  if (n == 0)
+    return true;
+
+  /* Validate both pointers and perform copy under lock to prevent concurrent free.  */
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_validate_device_ptr (ord, src, n, "async_dev2dev source"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+  if (!metal_validate_device_ptr (ord, dst, n, "async_dev2dev destination"))
+    {
+      pthread_mutex_unlock (&metal_lock);
+      return false;
+    }
+
   std::memmove (dst, src, n);
+  pthread_mutex_unlock (&metal_lock);
   return true;
 }
 
