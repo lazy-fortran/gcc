@@ -1,4 +1,4 @@
-! { dg-do run { target openacc_metal_selected } }
+! { dg-do run { target openacc_metal_accel_selected } }
 
 ! Basic Metal OpenACC integration test
 
