@@ -79,6 +79,16 @@ static struct metal_device metal_devices[MAX_METAL_DEVICES];
 static int num_metal_devices = -1;
 static pthread_mutex_t metal_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* OpenACC async queue structure.  Each queue wraps a Metal command queue
+   for asynchronous command submission.  */
+struct goacc_asyncqueue
+{
+  int device_ord;		/* Device ordinal this queue belongs to.  */
+  MTL::CommandQueue *queue;	/* Metal command queue for async ops.  */
+  MTL::CommandBuffer *last_cmd;	/* Last submitted command buffer (for sync).  */
+  pthread_mutex_t mutex;	/* Protects last_cmd access.  */
+};
+
 /* Initialize device enumeration (called once).  */
 static void
 metal_enumerate_devices (void)
@@ -535,41 +545,172 @@ GOMP_OFFLOAD_openacc_destroy_thread_data (void *data __attribute__((unused)))
 }
 
 struct goacc_asyncqueue *
-GOMP_OFFLOAD_openacc_async_construct (int device __attribute__((unused)))
+GOMP_OFFLOAD_openacc_async_construct (int device)
 {
-  return nullptr;
+  metal_enumerate_devices ();
+  if (device < 0 || device >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", device);
+      return nullptr;
+    }
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[device].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", device);
+      return nullptr;
+    }
+
+  MTL::Device *mtl_device = metal_devices[device].device;
+  pthread_mutex_unlock (&metal_lock);
+
+  if (!mtl_device)
+    {
+      GOMP_PLUGIN_error ("device %d has no Metal device", device);
+      return nullptr;
+    }
+
+  /* Create a new command queue for this async queue.  */
+  MTL::CommandQueue *queue = mtl_device->newCommandQueue ();
+  if (!queue)
+    {
+      GOMP_PLUGIN_error ("failed to create command queue for device %d", device);
+      return nullptr;
+    }
+
+  struct goacc_asyncqueue *aq = new struct goacc_asyncqueue;
+  aq->device_ord = device;
+  aq->queue = queue;
+  aq->last_cmd = nullptr;
+  pthread_mutex_init (&aq->mutex, nullptr);
+
+  return aq;
 }
 
 bool
-GOMP_OFFLOAD_openacc_async_destruct (struct goacc_asyncqueue *aq __attribute__((unused)))
+GOMP_OFFLOAD_openacc_async_destruct (struct goacc_asyncqueue *aq)
 {
-  return false;
+  if (!aq)
+    return true;
+
+  pthread_mutex_lock (&aq->mutex);
+
+  /* Wait for any pending commands to complete before destroying.  */
+  if (aq->last_cmd)
+    {
+      aq->last_cmd->waitUntilCompleted ();
+      aq->last_cmd->release ();
+      aq->last_cmd = nullptr;
+    }
+
+  if (aq->queue)
+    {
+      aq->queue->release ();
+      aq->queue = nullptr;
+    }
+
+  pthread_mutex_unlock (&aq->mutex);
+  pthread_mutex_destroy (&aq->mutex);
+
+  delete aq;
+  return true;
 }
 
 int
-GOMP_OFFLOAD_openacc_async_test (struct goacc_asyncqueue *aq __attribute__((unused)))
+GOMP_OFFLOAD_openacc_async_test (struct goacc_asyncqueue *aq)
 {
-  return 0;
+  if (!aq)
+    return 1;  /* Null queue is always complete.  */
+
+  pthread_mutex_lock (&aq->mutex);
+
+  if (!aq->last_cmd)
+    {
+      pthread_mutex_unlock (&aq->mutex);
+      return 1;  /* No commands submitted yet.  */
+    }
+
+  /* Check if the last command buffer has completed.
+     Metal command buffer status:
+     - MTL::CommandBufferStatusNotEnqueued = 0
+     - MTL::CommandBufferStatusEnqueued = 1
+     - MTL::CommandBufferStatusCommitted = 2
+     - MTL::CommandBufferStatusScheduled = 3
+     - MTL::CommandBufferStatusCompleted = 4
+     - MTL::CommandBufferStatusError = 5  */
+  MTL::CommandBufferStatus status = aq->last_cmd->status ();
+  pthread_mutex_unlock (&aq->mutex);
+
+  return (status == MTL::CommandBufferStatusCompleted
+	  || status == MTL::CommandBufferStatusError) ? 1 : 0;
 }
 
 bool
-GOMP_OFFLOAD_openacc_async_synchronize (struct goacc_asyncqueue *aq __attribute__((unused)))
+GOMP_OFFLOAD_openacc_async_synchronize (struct goacc_asyncqueue *aq)
 {
-  return false;
+  if (!aq)
+    return true;
+
+  pthread_mutex_lock (&aq->mutex);
+
+  if (!aq->last_cmd)
+    {
+      pthread_mutex_unlock (&aq->mutex);
+      return true;  /* No commands to wait for.  */
+    }
+
+  /* Wait for the last command buffer to complete.  */
+  aq->last_cmd->waitUntilCompleted ();
+
+  /* Check for errors.  */
+  bool success = true;
+  if (aq->last_cmd->status () == MTL::CommandBufferStatusError)
+    {
+      GOMP_PLUGIN_error ("Metal command buffer error");
+      success = false;
+    }
+
+  pthread_mutex_unlock (&aq->mutex);
+  return success;
 }
 
 bool
-GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1 __attribute__((unused)),
-				      struct goacc_asyncqueue *aq2 __attribute__((unused)))
+GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1,
+				      struct goacc_asyncqueue *aq2)
 {
-  return false;
+  /* Serialize aq2 to wait for aq1's completion.  After this call,
+     any subsequent operations on aq2 are guaranteed to execute after
+     aq1's current operations complete.
+
+     Current implementation: Synchronize aq1 (blocking) before returning.
+     This ensures aq1 is complete, so any subsequent aq2 operations will
+     naturally occur after aq1.
+
+     TODO: A more efficient implementation would use Metal SharedEvents
+     to create GPU-side dependencies without blocking the CPU thread.  */
+  if (!aq1 || !aq2)
+    return true;  /* Nothing to serialize.  */
+
+  return GOMP_OFFLOAD_openacc_async_synchronize (aq1);
 }
 
 void
-GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *aq __attribute__((unused)),
-					   void (*fn) (void *) __attribute__((unused)),
-					   void *data __attribute__((unused)))
+GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *aq,
+					   void (*fn) (void *),
+					   void *data)
 {
+  if (!aq || !fn)
+    return;
+
+  /* For now, execute callback synchronously after waiting for completion.
+     A proper implementation would use Metal's addCompletedHandler.
+
+     Note: We still execute the callback even if synchronization reports
+     an error, as the callback may need to perform cleanup.  The callback
+     should check device state if error handling is needed.  */
+  GOMP_OFFLOAD_openacc_async_synchronize (aq);
+  fn (data);
 }
 
 bool
