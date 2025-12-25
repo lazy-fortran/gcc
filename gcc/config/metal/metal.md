@@ -514,7 +514,7 @@
 	(ashiftrt:SI (match_operand:SI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = %1 >> %2;"
+  "%0 = (int)%1 >> %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "ashrdi3"
@@ -522,7 +522,7 @@
 	(ashiftrt:DI (match_operand:DI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = %1 >> %2;"
+  "%0 = (long)%1 >> %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "lshrsi3"
@@ -530,7 +530,7 @@
 	(lshiftrt:SI (match_operand:SI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = %1 >> %2;"
+  "%0 = (uint)%1 >> %2;"
   [(set_attr "type" "alu")])
 
 (define_insn "lshrdi3"
@@ -538,7 +538,7 @@
 	(lshiftrt:DI (match_operand:DI 1 "metal_register_operand" "R")
 		     (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = %1 >> %2;"
+  "%0 = (ulong)%1 >> %2;"
   [(set_attr "type" "alu")])
 
 ;; Bit manipulation operations
