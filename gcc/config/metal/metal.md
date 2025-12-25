@@ -422,6 +422,77 @@
   "// popc.b64 %0, %1"
   [(set_attr "type" "alu")])
 
+;; Rotate operations
+;; Decomposed into shift and or operations since Metal may not have direct rotate
+
+(define_expand "rotlsi3"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(rotate:SI (match_operand:SI 1 "metal_register_operand")
+		   (match_operand:SI 2 "metal_nonmemory_operand")))]
+  ""
+{
+  rtx temp = gen_reg_rtx (SImode);
+  rtx shift_amount = operands[2];
+  rtx inv_shift = gen_reg_rtx (SImode);
+
+  emit_insn (gen_subsi3 (inv_shift, GEN_INT (32), shift_amount));
+  emit_insn (gen_ashlsi3 (temp, operands[1], shift_amount));
+  emit_insn (gen_lshrsi3 (operands[0], operands[1], inv_shift));
+  emit_insn (gen_iorsi3 (operands[0], operands[0], temp));
+  DONE;
+})
+
+(define_expand "rotldi3"
+  [(set (match_operand:DI 0 "metal_register_operand")
+	(rotate:DI (match_operand:DI 1 "metal_register_operand")
+		   (match_operand:SI 2 "metal_nonmemory_operand")))]
+  ""
+{
+  rtx temp = gen_reg_rtx (DImode);
+  rtx shift_amount = operands[2];
+  rtx inv_shift = gen_reg_rtx (SImode);
+
+  emit_insn (gen_subsi3 (inv_shift, GEN_INT (64), shift_amount));
+  emit_insn (gen_ashldi3 (temp, operands[1], shift_amount));
+  emit_insn (gen_lshrdi3 (operands[0], operands[1], inv_shift));
+  emit_insn (gen_iordi3 (operands[0], operands[0], temp));
+  DONE;
+})
+
+(define_expand "rotrsi3"
+  [(set (match_operand:SI 0 "metal_register_operand")
+	(rotatert:SI (match_operand:SI 1 "metal_register_operand")
+		     (match_operand:SI 2 "metal_nonmemory_operand")))]
+  ""
+{
+  rtx temp = gen_reg_rtx (SImode);
+  rtx shift_amount = operands[2];
+  rtx inv_shift = gen_reg_rtx (SImode);
+
+  emit_insn (gen_subsi3 (inv_shift, GEN_INT (32), shift_amount));
+  emit_insn (gen_lshrsi3 (temp, operands[1], shift_amount));
+  emit_insn (gen_ashlsi3 (operands[0], operands[1], inv_shift));
+  emit_insn (gen_iorsi3 (operands[0], operands[0], temp));
+  DONE;
+})
+
+(define_expand "rotrdi3"
+  [(set (match_operand:DI 0 "metal_register_operand")
+	(rotatert:DI (match_operand:DI 1 "metal_register_operand")
+		     (match_operand:SI 2 "metal_nonmemory_operand")))]
+  ""
+{
+  rtx temp = gen_reg_rtx (DImode);
+  rtx shift_amount = operands[2];
+  rtx inv_shift = gen_reg_rtx (SImode);
+
+  emit_insn (gen_subsi3 (inv_shift, GEN_INT (64), shift_amount));
+  emit_insn (gen_lshrdi3 (temp, operands[1], shift_amount));
+  emit_insn (gen_ashldi3 (operands[0], operands[1], inv_shift));
+  emit_insn (gen_iordi3 (operands[0], operands[0], temp));
+  DONE;
+})
+
 ;; Floating point arithmetic
 
 (define_insn "addsf3"
