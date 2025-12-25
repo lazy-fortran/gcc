@@ -110,6 +110,13 @@ static struct metal_device metal_devices[MAX_METAL_DEVICES];
 static int num_metal_devices = -1;
 static pthread_mutex_t metal_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Forward declarations for async queue functions.  */
+static void metal_async_queue_signal (struct goacc_asyncqueue *aq,
+				      MTL::CommandBuffer *cmd);
+static uint64_t metal_async_queue_encode_wait (struct goacc_asyncqueue *waiter_aq,
+					       struct goacc_asyncqueue *target_aq,
+					       MTL::CommandBuffer *cmd);
+
 /* OpenACC async queue structure.  Each queue wraps a Metal command queue
    for asynchronous command submission.  */
 struct goacc_asyncqueue
@@ -887,6 +894,42 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
   return 1;
 }
 
+/* Compute Metal launch dimensions from OpenACC dimensions.  */
+static void
+metal_compute_launch_dims (unsigned *dims, unsigned *gangs,
+			   unsigned *workers, unsigned *vectors)
+{
+  *gangs = dims[GOMP_DIM_GANG] ? dims[GOMP_DIM_GANG] : 1;
+  *workers = dims[GOMP_DIM_WORKER] ? dims[GOMP_DIM_WORKER] : 1;
+  *vectors = dims[GOMP_DIM_VECTOR] ? dims[GOMP_DIM_VECTOR] : 32;
+}
+
+/* Bind kernel arguments to compute encoder.  */
+static void
+metal_bind_kernel_arguments (MTL::ComputeCommandEncoder *enc, int ord,
+			      void *dp, MTL::CommandBuffer *cmd)
+{
+  if (!dp)
+    return;
+
+  /* Find the Metal buffer containing dp.  */
+  MTL::Buffer *args_buffer = metal_find_buffer (ord, dp);
+  if (!args_buffer)
+    {
+      enc->endEncoding ();
+      cmd->release ();
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_fatal ("kernel argument buffer not found");
+    }
+
+  /* Calculate offset within buffer.  */
+  uintptr_t buf_start = reinterpret_cast<uintptr_t>(args_buffer->contents ());
+  uintptr_t addr = reinterpret_cast<uintptr_t>(dp);
+  size_t offset = addr - buf_start;
+
+  enc->setBuffer (args_buffer, offset, 0);
+}
+
 /* Execute a Metal kernel with the specified dimensions.
 
    Parameters:
@@ -895,6 +938,7 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
    - dp: device pointer to kernel arguments
    - dims: launch dimensions [gang, worker, vector]
    - queue: Metal command queue (NULL for synchronous execution)
+   - aq: async queue (NULL for synchronous execution)
    - cmd_out: optional output parameter for async command buffer
 
    Metal thread organization:
@@ -902,13 +946,14 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
    - workers*vectors map to threads per threadgroup
    - Metal executes in (gangs, 1, 1) threadgroups of (vectors, workers, 1) threads
 
+   For async execution, signals the queue event before committing.
    Returns the command buffer for async execution if cmd_out is provided,
    otherwise waits for synchronous completion.
 */
 static void
 metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
 	    unsigned *dims, MTL::CommandQueue *queue,
-	    MTL::CommandBuffer **cmd_out)
+	    struct goacc_asyncqueue *aq, MTL::CommandBuffer **cmd_out)
 {
   if (!fn_desc || !fn_desc->pso)
     GOMP_PLUGIN_fatal ("invalid kernel descriptor");
@@ -925,7 +970,6 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
       GOMP_PLUGIN_fatal ("device %d not initialized", ord);
     }
 
-  MTL::Device *device = metal_devices[ord].device;
   MTL::CommandQueue *exec_queue = queue ? queue : metal_devices[ord].queue;
 
   if (!exec_queue)
@@ -934,10 +978,9 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
       GOMP_PLUGIN_fatal ("no command queue available for kernel execution");
     }
 
-  /* Use default dimensions if not specified.  */
-  unsigned gangs = dims[GOMP_DIM_GANG] ? dims[GOMP_DIM_GANG] : 1;
-  unsigned workers = dims[GOMP_DIM_WORKER] ? dims[GOMP_DIM_WORKER] : 1;
-  unsigned vectors = dims[GOMP_DIM_VECTOR] ? dims[GOMP_DIM_VECTOR] : 32;
+  /* Compute launch dimensions.  */
+  unsigned gangs, workers, vectors;
+  metal_compute_launch_dims (dims, &gangs, &workers, &vectors);
 
   /* Create command buffer for kernel execution.  */
   MTL::CommandBuffer *cmd = exec_queue->commandBuffer ();
@@ -956,47 +999,24 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
       GOMP_PLUGIN_fatal ("failed to create compute command encoder");
     }
 
-  /* Set compute pipeline state.  */
+  /* Set compute pipeline state and bind arguments.  */
   enc->setComputePipelineState (fn_desc->pso);
+  metal_bind_kernel_arguments (enc, ord, dp, cmd);
 
-  /* Bind kernel arguments.
-     For Metal, the device pointer (dp) points to a buffer containing
-     kernel arguments. We pass this as buffer at index 0.  */
-  if (dp)
-    {
-      /* Find the Metal buffer containing dp.  */
-      MTL::Buffer *args_buffer = metal_find_buffer (ord, dp);
-      if (!args_buffer)
-	{
-	  enc->endEncoding ();
-	  cmd->release ();
-	  pthread_mutex_unlock (&metal_lock);
-	  GOMP_PLUGIN_fatal ("kernel argument buffer not found");
-	}
-
-      /* Calculate offset within buffer.  */
-      uintptr_t buf_start = reinterpret_cast<uintptr_t>(args_buffer->contents ());
-      uintptr_t addr = reinterpret_cast<uintptr_t>(dp);
-      size_t offset = addr - buf_start;
-
-      enc->setBuffer (args_buffer, offset, 0);
-    }
-
-  /* Configure thread execution.
-     Metal threadgroup size: (vectors, workers, 1)
-     Metal grid size: (gangs, 1, 1) threadgroups  */
+  /* Configure thread execution and dispatch.  */
   MTL::Size threadgroup_size = MTL::Size::Make (vectors, workers, 1);
   MTL::Size grid_size = MTL::Size::Make (gangs, 1, 1);
-
-  /* Dispatch compute work.  */
   enc->dispatchThreadgroups (grid_size, threadgroup_size);
-
-  /* End encoding and commit.  */
   enc->endEncoding ();
+
+  /* For async execution, signal event BEFORE commit.  */
+  if (aq && cmd_out)
+    metal_async_queue_signal (aq, cmd);
+
+  /* Commit command buffer.  */
   cmd->commit ();
 
-  /* For synchronous execution, wait for completion.
-     For async execution, return command buffer to caller.  */
+  /* Handle sync vs async completion.  */
   if (cmd_out)
     {
       *cmd_out = cmd;
@@ -1005,7 +1025,6 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
     {
       cmd->waitUntilCompleted ();
 
-      /* Check for errors.  */
       if (cmd->status () == MTL::CommandBufferStatusError)
 	{
 	  MTL::Error *error = cmd->error ();
@@ -1056,7 +1075,7 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *),
   /* Execute kernel synchronously on default queue.
      Note: We don't have a device ordinal here, so we assume device 0.
      This matches NVPTX behavior which uses the current device.  */
-  metal_exec (0, fn_desc, dp, dims, nullptr, nullptr);
+  metal_exec (0, fn_desc, dp, dims, nullptr, nullptr, nullptr);
 }
 
 void
@@ -1075,20 +1094,17 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
   /* devaddrs points to device memory containing kernel arguments.  */
   void *dp = devaddrs ? *devaddrs : nullptr;
 
-  /* Execute on async queue and track command buffer for synchronization.  */
+  /* Execute on async queue and track command buffer for synchronization.
+     Signal is called inside metal_exec before commit.  */
   MTL::CommandBuffer *cmd = nullptr;
-  metal_exec (aq->device_ord, fn_desc, dp, dims, aq->queue, &cmd);
+  metal_exec (aq->device_ord, fn_desc, dp, dims, aq->queue, aq, &cmd);
 
-  /* Store command buffer for later synchronization and signal completion.  */
+  /* Store command buffer for later synchronization.  */
   pthread_mutex_lock (&aq->mutex);
 
   if (aq->last_cmd)
     aq->last_cmd->release ();
   aq->last_cmd = cmd;
-
-  /* Signal completion event for GPU-side synchronization.  */
-  if (cmd)
-    metal_async_queue_signal (aq, cmd);
 
   pthread_mutex_unlock (&aq->mutex);
 }
