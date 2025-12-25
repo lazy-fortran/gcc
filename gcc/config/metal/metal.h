@@ -27,6 +27,14 @@ enum msl_version {
   MSL_VERSION_3_1 = 31
 };
 
+/* Address space qualifiers for Metal.  */
+enum metal_addr_space {
+  ADDR_SPACE_GENERIC = 0,
+  ADDR_SPACE_DEVICE,
+  ADDR_SPACE_THREADGROUP,
+  ADDR_SPACE_CONSTANT
+};
+
 /* Run-time Target.  */
 
 #define TARGET_CPU_CPP_BUILTINS() metal_cpu_cpp_builtins ()
