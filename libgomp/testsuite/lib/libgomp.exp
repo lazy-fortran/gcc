@@ -360,6 +360,9 @@ proc offload_target_to_openacc_device_type { offload_target } {
 	disable {
 	    return "host"
 	}
+	metal* {
+	    return "metal"
+	}
 	nvptx* {
 	    return "nvidia"
 	}
