@@ -1228,92 +1228,88 @@
   "// bra.%c0 %1, %2, %l3"
   [(set_attr "type" "branch")])
 
-;; Conditional store patterns (cstore)
-;; These patterns set a register to 0 or 1 based on a comparison result
-
-(define_expand "cstoresi4"
-  [(set (match_operand:SI 0 "metal_register_operand")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:SI 2 "metal_register_operand")
-	   (match_operand:SI 3 "metal_nonmemory_operand")]))]
+(define_expand "cbranchdi4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DI 1 "metal_register_operand")
+			 (match_operand:DI 2 "metal_nonmemory_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
   ""
   "")
 
-(define_insn "*cstoresi4_insn"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:SI 2 "metal_register_operand" "R")
-	   (match_operand:SI 3 "metal_nonmemory_operand" "Ri")]))]
+(define_insn "*branch_di"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DI 1 "metal_register_operand" "R")
+			 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
   ""
-  "// set.%c1.s32 %0, %2, %3"
-  [(set_attr "type" "alu")])
+  "// bra.%c0 %1, %2, %l3"
+  [(set_attr "type" "branch")])
 
-(define_expand "cstoredi4"
-  [(set (match_operand:SI 0 "metal_register_operand")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:DI 2 "metal_register_operand")
-	   (match_operand:DI 3 "metal_nonmemory_operand")]))]
+(define_expand "cbranchsf4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:SF 1 "metal_register_operand")
+			 (match_operand:SF 2 "metal_register_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
   ""
   "")
 
-(define_insn "*cstoredi4_insn"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:DI 2 "metal_register_operand" "R")
-	   (match_operand:DI 3 "metal_nonmemory_operand" "Ri")]))]
+(define_insn "*branch_sf"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:SF 1 "metal_register_operand" "R")
+			 (match_operand:SF 2 "metal_register_operand" "R")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
   ""
-  "// set.%c1.s64 %0, %2, %3"
-  [(set_attr "type" "alu")])
-
-(define_expand "cstoresf4"
-  [(set (match_operand:SI 0 "metal_register_operand")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:SF 2 "metal_register_operand")
-	   (match_operand:SF 3 "metal_register_operand")]))]
-  ""
-  "")
-
-(define_insn "*cstoresf4_insn"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:SF 2 "metal_register_operand" "R")
-	   (match_operand:SF 3 "metal_register_operand" "R")]))]
-  ""
-  "// set.%c1.f32 %0, %2, %3"
+  "// bra.%c0 %1, %2, %l3"
   [(set_attr "type" "fpu")])
 
-(define_expand "cstoredf4"
-  [(set (match_operand:SI 0 "metal_register_operand")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:DF 2 "metal_register_operand")
-	   (match_operand:DF 3 "metal_register_operand")]))]
+(define_expand "cbranchdf4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DF 1 "metal_register_operand")
+			 (match_operand:DF 2 "metal_register_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
   ""
   "")
 
-(define_insn "*cstoredf4_insn"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:DF 2 "metal_register_operand" "R")
-	   (match_operand:DF 3 "metal_register_operand" "R")]))]
+(define_insn "*branch_df"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:DF 1 "metal_register_operand" "R")
+			 (match_operand:DF 2 "metal_register_operand" "R")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
   ""
-  "// set.%c1.f64 %0, %2, %3"
+  "// bra.%c0 %1, %2, %l3"
   [(set_attr "type" "fpu")])
 
-(define_expand "cstorehf4"
-  [(set (match_operand:SI 0 "metal_register_operand")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:HF 2 "metal_register_operand")
-	   (match_operand:HF 3 "metal_register_operand")]))]
+(define_expand "cbranchhf4"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:HF 1 "metal_register_operand")
+			 (match_operand:HF 2 "metal_register_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
   ""
   "")
 
-(define_insn "*cstorehf4_insn"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(match_operator:SI 1 "comparison_operator"
-	  [(match_operand:HF 2 "metal_register_operand" "R")
-	   (match_operand:HF 3 "metal_register_operand" "R")]))]
+(define_insn "*branch_hf"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+			[(match_operand:HF 1 "metal_register_operand" "R")
+			 (match_operand:HF 2 "metal_register_operand" "R")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
   ""
-  "// set.%c1.f16 %0, %2, %3"
+  "// bra.%c0 %1, %2, %l3"
   [(set_attr "type" "fpu")])
 
 ;; Conditional select operations
@@ -1499,63 +1495,6 @@
 })
 
 ;; Type conversions
-
-;; QI (8-bit) <-> HI (16-bit)
-
-(define_insn "extendqihi2"
-  [(set (match_operand:HI 0 "metal_register_operand" "=R")
-	(sign_extend:HI (match_operand:QI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.s16.s8 %0, %1"
-  [(set_attr "type" "alu")])
-
-(define_insn "zero_extendqihi2"
-  [(set (match_operand:HI 0 "metal_register_operand" "=R")
-	(zero_extend:HI (match_operand:QI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.u16.u8 %0, %1"
-  [(set_attr "type" "alu")])
-
-(define_insn "trunchiqi2"
-  [(set (match_operand:QI 0 "metal_register_operand" "=R")
-	(truncate:QI (match_operand:HI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.u8.u16 %0, %1"
-  [(set_attr "type" "alu")])
-
-;; QI (8-bit) -> SI (32-bit)
-
-(define_insn "extendqisi2"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(sign_extend:SI (match_operand:QI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.s32.s8 %0, %1"
-  [(set_attr "type" "alu")])
-
-(define_insn "zero_extendqisi2"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(zero_extend:SI (match_operand:QI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.u32.u8 %0, %1"
-  [(set_attr "type" "alu")])
-
-;; HI (16-bit) -> SI (32-bit)
-
-(define_insn "extendhisi2"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(sign_extend:SI (match_operand:HI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.s32.s16 %0, %1"
-  [(set_attr "type" "alu")])
-
-(define_insn "zero_extendhisi2"
-  [(set (match_operand:SI 0 "metal_register_operand" "=R")
-	(zero_extend:SI (match_operand:HI 1 "metal_register_operand" "R")))]
-  ""
-  "// cvt.u32.u16 %0, %1"
-  [(set_attr "type" "alu")])
-
-;; SI (32-bit) -> DI (64-bit)
 
 (define_insn "zero_extendsidi2"
   [(set (match_operand:DI 0 "metal_register_operand" "=R")
