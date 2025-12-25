@@ -87,7 +87,9 @@ struct goacc_asyncqueue
   int device_ord;		/* Device ordinal this queue belongs to.  */
   MTL::CommandQueue *queue;	/* Metal command queue for async ops.  */
   MTL::CommandBuffer *last_cmd;	/* Last submitted command buffer (for sync).  */
-  pthread_mutex_t mutex;	/* Protects last_cmd access.  */
+  MTL::SharedEvent *event;	/* Shared event for GPU-side synchronization.  */
+  uint64_t event_value;		/* Current event signal value.  */
+  pthread_mutex_t mutex;	/* Protects last_cmd, event, event_value.  */
 };
 
 /* Initialize device enumeration (called once).  */
@@ -909,6 +911,63 @@ GOMP_OFFLOAD_openacc_destroy_thread_data (void *data __attribute__((unused)))
 {
 }
 
+/* Helper function to signal the queue's event after GPU work.
+   Infrastructure for kernel execution - will be called after
+   committing command buffers that contain GPU work.
+
+   Usage (when kernel execution is implemented):
+     MTL::CommandBuffer *cmd = queue->commandBuffer();
+     // ... encode GPU work ...
+     metal_async_queue_signal(aq, cmd);
+     cmd->commit();
+
+   This enables GPU-side synchronization via async_serialize.  */
+static void
+metal_async_queue_signal (struct goacc_asyncqueue *aq,
+			  MTL::CommandBuffer *cmd)
+{
+  if (!aq || !cmd || !aq->event)
+    return;
+
+  /* Increment event value and encode signal.  The command buffer
+     will signal this value upon completion.  */
+  pthread_mutex_lock (&aq->mutex);
+  aq->event_value++;
+  cmd->encodeSignalEvent (aq->event, aq->event_value);
+  pthread_mutex_unlock (&aq->mutex);
+}
+
+/* Helper function to encode a wait for another queue's event.
+   Infrastructure for kernel execution - will be called when
+   creating command buffers that must wait for another queue.
+
+   Usage (when kernel execution is implemented):
+     MTL::CommandBuffer *cmd = queue->commandBuffer();
+     metal_async_queue_encode_wait(my_aq, other_aq, cmd);
+     // ... encode GPU work that depends on other_aq ...
+     cmd->commit();
+
+   Returns the event value that was waited for, or 0 if no wait
+   was encoded.  */
+static uint64_t
+metal_async_queue_encode_wait (struct goacc_asyncqueue *waiter_aq,
+			       struct goacc_asyncqueue *target_aq,
+			       MTL::CommandBuffer *cmd)
+{
+  if (!waiter_aq || !target_aq || !cmd || !target_aq->event)
+    return 0;
+
+  /* Get the current event value to wait for.  */
+  pthread_mutex_lock (&target_aq->mutex);
+  uint64_t wait_value = target_aq->event_value;
+  pthread_mutex_unlock (&target_aq->mutex);
+
+  if (wait_value > 0)
+    cmd->encodeWaitForEvent (target_aq->event, wait_value);
+
+  return wait_value;
+}
+
 struct goacc_asyncqueue *
 GOMP_OFFLOAD_openacc_async_construct (int device)
 {
@@ -944,10 +1003,23 @@ GOMP_OFFLOAD_openacc_async_construct (int device)
       return nullptr;
     }
 
+  /* Create shared event for GPU-side synchronization between queues.
+     SharedEvents allow one queue to signal completion and another queue
+     to wait without blocking the CPU thread.  */
+  MTL::SharedEvent *event = mtl_device->newSharedEvent ();
+  if (!event)
+    {
+      queue->release ();
+      GOMP_PLUGIN_error ("failed to create shared event for device %d", device);
+      return nullptr;
+    }
+
   struct goacc_asyncqueue *aq = new struct goacc_asyncqueue;
   aq->device_ord = device;
   aq->queue = queue;
   aq->last_cmd = nullptr;
+  aq->event = event;
+  aq->event_value = 0;
   pthread_mutex_init (&aq->mutex, nullptr);
 
   return aq;
@@ -967,6 +1039,12 @@ GOMP_OFFLOAD_openacc_async_destruct (struct goacc_asyncqueue *aq)
       aq->last_cmd->waitUntilCompleted ();
       aq->last_cmd->release ();
       aq->last_cmd = nullptr;
+    }
+
+  if (aq->event)
+    {
+      aq->event->release ();
+      aq->event = nullptr;
     }
 
   if (aq->queue)
@@ -1048,12 +1126,16 @@ GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1,
      any subsequent operations on aq2 are guaranteed to execute after
      aq1's current operations complete.
 
-     Current implementation: Synchronize aq1 (blocking) before returning.
-     This ensures aq1 is complete, so any subsequent aq2 operations will
-     naturally occur after aq1.
+     SharedEvent-based synchronization is available via:
+     - metal_async_queue_signal: call after each command buffer commit on aq1
+     - metal_async_queue_encode_wait: call before command buffer commit on aq2
 
-     TODO: A more efficient implementation would use Metal SharedEvents
-     to create GPU-side dependencies without blocking the CPU thread.  */
+     When kernel execution is implemented, each command buffer will call
+     metal_async_queue_signal after encoding GPU work, allowing aq2 to
+     use metal_async_queue_encode_wait to create GPU-side dependencies
+     without blocking the CPU thread.
+
+     Current implementation: Block on aq1's completion via synchronize.  */
   if (!aq1 || !aq2)
     return true;  /* Nothing to serialize.  */
 
