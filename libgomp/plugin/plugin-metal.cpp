@@ -36,6 +36,7 @@
 #define MTL_PRIVATE_IMPLEMENTATION
 #include <Metal/Metal.hpp>
 #include <Foundation/Foundation.hpp>
+#include <dispatch/dispatch.h>
 
 extern "C" {
 #include "libgomp-plugin.h"
@@ -54,6 +55,12 @@ extern "C" {
 /* Maximum number of tracked buffer allocations per device.  */
 #define MAX_METAL_BUFFERS 4096
 
+/* Maximum number of loaded images per device.  */
+#define MAX_METAL_IMAGES 64
+
+/* Maximum number of functions (kernels) per image.  */
+#define MAX_METAL_FUNCTIONS 512
+
 /* Buffer allocation tracking entry.  */
 struct metal_buffer_entry
 {
@@ -61,31 +68,50 @@ struct metal_buffer_entry
   MTL::Buffer *buffer;	/* The Metal buffer object.  */
 };
 
-/* Target function launch information (matches NVPTX structure).  */
-struct targ_fn_launch
+/* Metal object binary in offload image.  */
+struct metal_obj
 {
-  const char *fn;		/* Kernel function name.  */
-  unsigned short dim[GOMP_DIM_MAX];  /* Default launch dimensions.  */
+  const void *data;	/* Pointer to metallib binary data.  */
+  size_t size;		/* Size of metallib binary.  */
 };
 
-/* Metal kernel function descriptor.  */
+/* Kernel function descriptor.  */
+struct metal_fn_launch
+{
+  const char *fn;	/* Kernel function name.  */
+  unsigned short dim[3];	/* Default dimensions [gang, worker, vector].  */
+};
+
+/* Metal offload image header (matches mkoffload output).  */
+struct metal_tdata
+{
+  uintptr_t omp_requires_mask;
+  const struct metal_obj *metal_objs;
+  unsigned metal_num;
+  const char *const *var_names;
+  unsigned var_num;
+  const struct metal_fn_launch *fn_descs;
+  unsigned fn_num;
+  unsigned ind_fn_num;
+};
+
+/* Kernel function descriptor for runtime.  */
 struct metal_fn_descriptor
 {
-  MTL::Function *fn;		/* Metal function object.  */
-  MTL::ComputePipelineState *pso;  /* Compute pipeline state.  */
-  const struct targ_fn_launch *launch;  /* Launch metadata.  */
+  MTL::Function *fn;		/* Metal kernel function.  */
+  MTL::ComputePipelineState *pipeline;	/* Compiled compute pipeline.  */
+  const struct metal_fn_launch *launch;	/* Launch configuration.  */
 };
 
-/* Loaded Metal library tracking.  */
-struct metal_library_entry
+/* Loaded Metal image.  */
+struct metal_image_data
 {
-  MTL::Library *library;		/* Metal library object.  */
+  const void *target_data;		/* Original image header.  */
+  MTL::Library *library;		/* Loaded Metal library.  */
   struct metal_fn_descriptor *fns;	/* Array of kernel descriptors.  */
-  int num_fns;				/* Number of kernels in library.  */
+  unsigned fn_num;			/* Number of functions.  */
+  struct metal_image_data *next;	/* Linked list of images.  */
 };
-
-/* Maximum number of loaded Metal libraries per device.  */
-#define MAX_METAL_LIBRARIES 64
 
 /* Per-device state.  */
 struct metal_device
@@ -100,9 +126,9 @@ struct metal_device
   struct metal_buffer_entry buffers[MAX_METAL_BUFFERS];
   int num_buffers;
 
-  /* Loaded library tracking.  */
-  struct metal_library_entry libraries[MAX_METAL_LIBRARIES];
-  int num_libraries;
+  /* Loaded images tracking.  */
+  struct metal_image_data *images;	/* Linked list of loaded images.  */
+  pthread_mutex_t image_lock;		/* Protects images list.  */
 };
 
 /* Device table.  */
@@ -154,7 +180,8 @@ metal_enumerate_devices (void)
       metal_devices[0].queue = nullptr;
       metal_devices[0].initialized = false;
       metal_devices[0].num_buffers = 0;
-      metal_devices[0].num_libraries = 0;
+      metal_devices[0].images = nullptr;
+      pthread_mutex_init (&metal_devices[0].image_lock, nullptr);
 
       /* Store device name persistently (Metal string may be autoreleased).  */
       const char *name = device->name ()->utf8String ();
@@ -336,6 +363,36 @@ GOMP_OFFLOAD_fini_device (int ord)
       return true;
     }
 
+  /* Release all loaded images for this device.  */
+  pthread_mutex_lock (&metal_devices[ord].image_lock);
+  struct metal_image_data *img = metal_devices[ord].images;
+  while (img)
+    {
+      struct metal_image_data *next = img->next;
+
+      /* Release function descriptors.  */
+      if (img->fns)
+	{
+	  for (unsigned i = 0; i < img->fn_num; i++)
+	    {
+	      if (img->fns[i].pipeline)
+		img->fns[i].pipeline->release ();
+	      if (img->fns[i].fn)
+		img->fns[i].fn->release ();
+	    }
+	  free (img->fns);
+	}
+
+      /* Release library.  */
+      if (img->library)
+	img->library->release ();
+
+      free (img);
+      img = next;
+    }
+  metal_devices[ord].images = nullptr;
+  pthread_mutex_unlock (&metal_devices[ord].image_lock);
+
   /* Release all remaining buffers for this device.  */
   for (int i = 0; i < metal_devices[ord].num_buffers; i++)
     {
@@ -360,6 +417,7 @@ GOMP_OFFLOAD_fini_device (int ord)
       metal_devices[ord].device = nullptr;
     }
 
+  pthread_mutex_destroy (&metal_devices[ord].image_lock);
   metal_devices[ord].initialized = false;
   pthread_mutex_unlock (&metal_lock);
 
@@ -373,10 +431,8 @@ GOMP_OFFLOAD_version (void)
 }
 
 int
-GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
-			 unsigned version,
-			 const void *target_data __attribute__((unused)),
-			 struct addr_pair **target_table __attribute__((unused)),
+GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
+			 struct addr_pair **target_table,
 			 uint64_t **rev_fn_table __attribute__((unused)),
 			 uint64_t *host_ind_fn_table __attribute__((unused)))
 {
@@ -388,20 +444,269 @@ GOMP_OFFLOAD_load_image (int ord __attribute__((unused)),
       return -1;
     }
 
-  /* Metal backend not yet implemented.  When implemented, this function
-     will extract MSL code from target_data, compile it using
-     MTLDevice::newLibraryWithSource, create compute pipelines for each
-     kernel, and return kernel addresses in target_table.  */
-  GOMP_PLUGIN_error ("Metal image loading not yet implemented");
-  return -1;
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return -1;
+    }
+
+  pthread_mutex_lock (&metal_lock);
+  if (!metal_devices[ord].initialized)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
+      return -1;
+    }
+
+  MTL::Device *device = metal_devices[ord].device;
+  pthread_mutex_unlock (&metal_lock);
+
+  if (!device)
+    {
+      GOMP_PLUGIN_error ("device %d has no Metal device", ord);
+      return -1;
+    }
+
+  const struct metal_tdata *img_header
+    = (const struct metal_tdata *) target_data;
+
+  /* Currently only supporting single metallib per image.  */
+  if (img_header->metal_num != 1)
+    {
+      GOMP_PLUGIN_error ("Metal plugin expects exactly 1 metallib per image, "
+			 "got %u", img_header->metal_num);
+      return -1;
+    }
+
+  const struct metal_obj *metal_obj = &img_header->metal_objs[0];
+
+  /* Load Metal library from binary data using dispatch_data.  */
+  dispatch_data_t data = dispatch_data_create (metal_obj->data,
+					       metal_obj->size,
+					       nullptr,
+					       DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+  if (!data)
+    {
+      GOMP_PLUGIN_error ("failed to create dispatch_data for metallib");
+      return -1;
+    }
+
+  NS::Error *error = nullptr;
+  MTL::Library *library = device->newLibrary (data, &error);
+  dispatch_release (data);
+
+  if (!library || error)
+    {
+      if (error)
+	{
+	  const char *err_desc = error->localizedDescription ()->utf8String ();
+	  GOMP_PLUGIN_error ("Metal library loading failed: %s",
+			     err_desc ? err_desc : "unknown error");
+	  error->release ();
+	}
+      else
+	GOMP_PLUGIN_error ("Metal library loading failed: unknown error");
+      return -1;
+    }
+
+  unsigned fn_entries = img_header->fn_num;
+  unsigned var_entries = img_header->var_num;
+  const struct metal_fn_launch *fn_descs = img_header->fn_descs;
+  const char *const *var_names = img_header->var_names;
+
+  /* Allocate target table for functions and variables.  */
+  struct addr_pair *targ_tbl
+    = (struct addr_pair *) GOMP_PLUGIN_malloc (sizeof (struct addr_pair)
+					       * (fn_entries + var_entries));
+  *target_table = targ_tbl;
+
+  /* Allocate function descriptor array.  */
+  struct metal_fn_descriptor *targ_fns
+    = (struct metal_fn_descriptor *) GOMP_PLUGIN_malloc (
+	sizeof (struct metal_fn_descriptor) * fn_entries);
+
+  /* Create new image data structure.  */
+  struct metal_image_data *new_image
+    = (struct metal_image_data *) GOMP_PLUGIN_malloc (
+	sizeof (struct metal_image_data));
+  new_image->target_data = target_data;
+  new_image->library = library;
+  new_image->fns = targ_fns;
+  new_image->fn_num = fn_entries;
+  new_image->next = nullptr;
+
+  /* Load each kernel function and create compute pipeline.  */
+  for (unsigned i = 0; i < fn_entries; i++)
+    {
+      const char *fn_name = fn_descs[i].fn;
+
+      /* Get function from library.  */
+      NS::String *fn_str = NS::String::string (fn_name, NS::UTF8StringEncoding);
+      if (!fn_str)
+	{
+	  GOMP_PLUGIN_error ("failed to create string for function name %s",
+			     fn_name);
+	  /* Clean up previously loaded functions and pipelines.  */
+	  for (unsigned k = 0; k < i; k++)
+	    {
+	      if (targ_fns[k].pipeline)
+		targ_fns[k].pipeline->release ();
+	      if (targ_fns[k].fn)
+		targ_fns[k].fn->release ();
+	    }
+	  library->release ();
+	  free (new_image);
+	  free (targ_fns);
+	  free (targ_tbl);
+	  return -1;
+	}
+
+      MTL::Function *function = library->newFunction (fn_str);
+      if (!function)
+	{
+	  GOMP_PLUGIN_error ("Metal function %s not found in library", fn_name);
+	  /* Clean up previously loaded functions and pipelines.  */
+	  for (unsigned k = 0; k < i; k++)
+	    {
+	      if (targ_fns[k].pipeline)
+		targ_fns[k].pipeline->release ();
+	      if (targ_fns[k].fn)
+		targ_fns[k].fn->release ();
+	    }
+	  library->release ();
+	  free (new_image);
+	  free (targ_fns);
+	  free (targ_tbl);
+	  return -1;
+	}
+
+      /* Create compute pipeline state for this kernel.  */
+      NS::Error *pipeline_error = nullptr;
+      MTL::ComputePipelineState *pipeline
+	= device->newComputePipelineState (function, &pipeline_error);
+
+      if (!pipeline || pipeline_error)
+	{
+	  if (pipeline_error)
+	    {
+	      const char *err_desc
+		= pipeline_error->localizedDescription ()->utf8String ();
+	      GOMP_PLUGIN_error ("Metal pipeline creation failed for %s: %s",
+				 fn_name, err_desc ? err_desc : "unknown error");
+	      pipeline_error->release ();
+	    }
+	  else
+	    GOMP_PLUGIN_error ("Metal pipeline creation failed for %s", fn_name);
+
+	  if (function)
+	    function->release ();
+	  /* Clean up previously loaded functions and pipelines.  */
+	  for (unsigned k = 0; k < i; k++)
+	    {
+	      if (targ_fns[k].pipeline)
+		targ_fns[k].pipeline->release ();
+	      if (targ_fns[k].fn)
+		targ_fns[k].fn->release ();
+	    }
+	  library->release ();
+	  free (new_image);
+	  free (targ_fns);
+	  free (targ_tbl);
+	  return -1;
+	}
+
+      /* Store function descriptor.  */
+      targ_fns[i].fn = function;
+      targ_fns[i].pipeline = pipeline;
+      targ_fns[i].launch = &fn_descs[i];
+
+      /* Store in target table.  The address points to the descriptor.  */
+      targ_tbl[i].start = (uintptr_t) &targ_fns[i];
+      targ_tbl[i].end = targ_tbl[i].start + 1;
+    }
+
+  /* Handle variables (for now, just mark as unavailable).  */
+  for (unsigned j = 0; j < var_entries; j++)
+    {
+      targ_tbl[fn_entries + j].start = 0;
+      targ_tbl[fn_entries + j].end = 0;
+    }
+
+  /* All functions loaded successfully, add image to device's image list.  */
+  pthread_mutex_lock (&metal_devices[ord].image_lock);
+  new_image->next = metal_devices[ord].images;
+  metal_devices[ord].images = new_image;
+  pthread_mutex_unlock (&metal_devices[ord].image_lock);
+
+  /* Reverse function table not yet implemented for Metal.  */
+  if (rev_fn_table)
+    *rev_fn_table = nullptr;
+
+  return fn_entries + var_entries;
 }
 
 bool
-GOMP_OFFLOAD_unload_image (int ord __attribute__((unused)),
-			   unsigned version __attribute__((unused)),
-			   const void *target_data __attribute__((unused)))
+GOMP_OFFLOAD_unload_image (int ord, unsigned version, const void *target_data)
 {
-  GOMP_PLUGIN_error ("Metal image unloading not yet implemented");
+  if (GOMP_VERSION_DEV (version) != GOMP_VERSION_METAL)
+    {
+      GOMP_PLUGIN_error ("Offload data incompatible with Metal plugin"
+			 " (expected %u, received %u)",
+			 GOMP_VERSION_METAL, GOMP_VERSION_DEV (version));
+      return false;
+    }
+
+  metal_enumerate_devices ();
+  if (ord < 0 || ord >= num_metal_devices)
+    {
+      GOMP_PLUGIN_error ("invalid device ordinal %d", ord);
+      return false;
+    }
+
+  pthread_mutex_lock (&metal_devices[ord].image_lock);
+
+  /* Find and remove the image from the device's image list.  */
+  struct metal_image_data **img_ptr = &metal_devices[ord].images;
+  struct metal_image_data *img = *img_ptr;
+
+  while (img)
+    {
+      if (img->target_data == target_data)
+	{
+	  /* Remove from list.  */
+	  *img_ptr = img->next;
+
+	  /* Release function descriptors.  */
+	  if (img->fns)
+	    {
+	      for (unsigned i = 0; i < img->fn_num; i++)
+		{
+		  if (img->fns[i].pipeline)
+		    img->fns[i].pipeline->release ();
+		  if (img->fns[i].fn)
+		    img->fns[i].fn->release ();
+		}
+	      free (img->fns);
+	    }
+
+	  /* Release library.  */
+	  if (img->library)
+	    img->library->release ();
+
+	  free (img);
+	  pthread_mutex_unlock (&metal_devices[ord].image_lock);
+	  return true;
+	}
+
+      img_ptr = &img->next;
+      img = *img_ptr;
+    }
+
+  pthread_mutex_unlock (&metal_devices[ord].image_lock);
+
+  /* Image not found.  */
+  GOMP_PLUGIN_error ("image %p not found in device %d", target_data, ord);
   return false;
 }
 
