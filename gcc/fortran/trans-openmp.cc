@@ -3269,9 +3269,21 @@ gfc_trans_omp_clauses (stmtblock_t *block, gfc_omp_clauses *clauses,
 							     cond, tmp,
 							     NULL_TREE));
 			}
-		      /* For descriptor types, the unmapping happens below.  */
-		      if (op != EXEC_OMP_TARGET_EXIT_DATA
-			  || !GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (decl)))
+		      /* For descriptor types, the unmapping happens below.
+			 For ENTER/EXIT DATA on pass-by-reference scalars
+			 that are not actual POINTER/ALLOCATABLE, skip the
+			 pointer mapping - it would incorrectly map the
+			 local reference slot instead of the data.  */
+		      if ((op != EXEC_OMP_TARGET_EXIT_DATA
+			   && op != EXEC_OMP_TARGET_ENTER_DATA
+			   && op != EXEC_OACC_ENTER_DATA
+			   && op != EXEC_OACC_EXIT_DATA)
+			  || (!GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (decl))
+			      && (GFC_DECL_GET_SCALAR_POINTER (decl)
+				  || GFC_DECL_GET_SCALAR_ALLOCATABLE (decl)
+				  || GFC_DECL_CRAY_POINTEE (decl)
+				  || pointer
+				  || allocatable)))
 			{
 			  enum gomp_map_kind gmk = GOMP_MAP_POINTER;
 			  if (op == EXEC_OMP_TARGET_EXIT_DATA
