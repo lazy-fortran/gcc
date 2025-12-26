@@ -20,12 +20,20 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
-/* Packages Metal Shading Language (MSL) code into a C source file defining
-   the MSL code as a string, similar to how NVPTX mkoffload handles PTX.
+/* Offload image generation tool for Apple Metal.
 
-   This is a skeleton implementation.  Full Metal offloading requires:
-   1. A Metal compiler backend to generate MSL from GIMPLE/LTO
-   2. Runtime MSL compilation using MTLDevice::newLibraryWithSource  */
+   Processes LTO object files to generate Metal Shading Language code,
+   compiles it to metallib binary format, and packages it into a C source
+   file with offload tables for runtime registration.
+
+   Pipeline:
+   1. Extract LTO sections via driver with -xlto
+   2. Driver invokes lto1 to generate MSL from GIMPLE
+   3. Extract mapping directives from MSL
+   4. Compile MSL to .air with xcrun metal
+   5. Link .air to .metallib with xcrun metallib
+   6. Generate C source with embedded metallib and symbol tables
+   7. Compile C source to host object file  */
 
 #define IN_TARGET_CODE 1
 
