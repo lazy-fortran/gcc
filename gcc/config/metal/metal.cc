@@ -436,7 +436,7 @@ metal_print_operand (FILE *file, rtx x, int code)
 
     case 0:
       if (REG_P (x))
-	fprintf (file, "_reg%d", REGNO (x));
+	fprintf (file, "r%d", REGNO (x));
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
       else
@@ -465,56 +465,113 @@ metal_write_as_kernel (tree attrs)
   return lookup_attribute ("kernel", attrs) != NULL_TREE;
 }
 
-/* Emit declarations for pseudo-registers used in the function.
-   This follows the NVPTX backend approach of declaring all pseudos
-   in the function prologue.  */
+/* Emit a Metal kernel parameter declaration with buffer attribute.
+   BUFFER_INDEX is the buffer binding index, TYPE is the parameter type.
+   Returns the next buffer index to use.  */
 
-static void
-metal_emit_register_declarations (FILE *file)
+static int
+metal_write_kernel_arg (FILE *file, int buffer_index, tree type, bool first)
 {
-  /* Iterate through all pseudo-registers beyond virtual registers.  */
-  int maxregs = max_reg_num ();
-  for (int i = LAST_VIRTUAL_REGISTER + 1; i < maxregs; i++)
+  machine_mode mode = TYPE_MODE (type);
+
+  if (mode == VOIDmode)
+    return buffer_index;
+
+  if (!first)
+    fprintf (file, ",\n    ");
+
+  /* Determine if this is a pointer type and extract pointee type info.  */
+  if (POINTER_TYPE_P (type))
     {
-      if (regno_reg_rtx[i] != const0_rtx)
-	{
-	  machine_mode mode = PSEUDO_REGNO_MODE (i);
+      tree pointee_type = TREE_TYPE (type);
+      machine_mode pointee_mode = TYPE_MODE (pointee_type);
+      addr_space_t as = TYPE_ADDR_SPACE (pointee_type);
+      const char *addrspace = metal_addrspace_string (as);
 
-	  /* Determine if register should be unsigned.
-	     For simplicity, we default to signed types for non-float modes.
-	     This matches common C/C++ semantics.  */
-	  bool unsigned_p = false;
+      /* Default to device address space for pointers without explicit space.
+         In Metal, kernel pointer parameters must have an address space qualifier.
+         ADDR_SPACE_GENERIC means no explicit qualifier was specified in source,
+         so we default to 'device' which is the most common for GPU memory.  */
+      if (as == ADDR_SPACE_GENERIC)
+        addrspace = "device ";
 
-	  /* Skip void mode registers.  */
-	  if (mode == VOIDmode)
-	    continue;
+      /* Determine signedness for integer types.  */
+      bool unsigned_p = false;
+      if (INTEGRAL_TYPE_P (pointee_type))
+        unsigned_p = TYPE_UNSIGNED (pointee_type);
+      const char *msl_type = metal_msl_type_from_mode (pointee_mode, unsigned_p);
 
-	  const char *type_str = metal_msl_type_from_mode (mode, unsigned_p);
-	  fprintf (file, "  %s _reg%d;\n", type_str, i);
-	}
+      fprintf (file, "%s%s* arg%d [[buffer(%d)]]",
+               addrspace, msl_type, buffer_index, buffer_index);
+
+      return buffer_index + 1;
+    }
+  else
+    {
+      /* Non-pointer parameters - passed by value as scalars.
+         Metal does not allow buffer attributes on scalar parameters.
+         Scalars are passed directly and don't consume buffer binding slots.  */
+      bool unsigned_p = false;
+      if (INTEGRAL_TYPE_P (type))
+        unsigned_p = TYPE_UNSIGNED (type);
+      const char *msl_type = metal_msl_type_from_mode (mode, unsigned_p);
+
+      fprintf (file, "%s arg%d",
+               msl_type, buffer_index);
+
+      return buffer_index;  /* Don't increment - scalars don't use buffer slots */
     }
 }
 
 /* Implement ASM_DECLARE_FUNCTION_NAME.  Emit [[kernel]] attribute
    for functions marked with the kernel attribute, followed by function
-   signature and opening brace.  */
+   signature with proper parameter declarations and opening brace.  */
 
 void
 metal_declare_function_name (FILE *file, const char *name, tree decl)
 {
-  if (metal_write_as_kernel (DECL_ATTRIBUTES (decl)))
+  bool is_kernel = metal_write_as_kernel (DECL_ATTRIBUTES (decl));
+
+  if (is_kernel)
     fprintf (file, "[[kernel]] ");
+
   fprintf (file, "void %s(", name);
 
-  /* Emit parameter list.  For now, emit empty parameter list.
-     Full parameter handling will be implemented in future work.  */
+  /* Emit parameter list.  */
+  int buffer_index = 0;
+  bool first = true;
+
+  if (is_kernel)
+    {
+      tree fntype = TREE_TYPE (decl);
+      tree args = TYPE_ARG_TYPES (fntype);
+      bool prototyped = true;
+
+      if (!args)
+        {
+          args = DECL_ARGUMENTS (decl);
+          prototyped = false;
+        }
+
+      for (; args != NULL_TREE; args = TREE_CHAIN (args))
+        {
+          tree type = prototyped ? TREE_VALUE (args) : TREE_TYPE (args);
+          buffer_index = metal_write_kernel_arg (file, buffer_index, type, first);
+          first = false;
+        }
+
+      /* Add thread position builtins for kernel functions.  */
+      if (!first)
+        fprintf (file, ",\n    ");
+
+      fprintf (file, "uint3 tid [[thread_position_in_grid]],\n");
+      fprintf (file, "    uint3 tgid [[threadgroup_position_in_grid]]");
+    }
+
   fprintf (file, ")");
 
   /* Emit opening brace for function body.  */
   fprintf (file, "\n{\n");
-
-  /* Emit declarations for all pseudo-registers used in this function.  */
-  metal_emit_register_declarations (file);
 }
 
 /* Terminate a function by writing a closing brace to FILE.
