@@ -436,7 +436,7 @@ metal_print_operand (FILE *file, rtx x, int code)
 
     case 0:
       if (REG_P (x))
-	fprintf (file, "r%d", REGNO (x));
+	fprintf (file, "_reg%d", REGNO (x));
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
       else
@@ -465,6 +465,36 @@ metal_write_as_kernel (tree attrs)
   return lookup_attribute ("kernel", attrs) != NULL_TREE;
 }
 
+/* Emit declarations for pseudo-registers used in the function.
+   This follows the NVPTX backend approach of declaring all pseudos
+   in the function prologue.  */
+
+static void
+metal_emit_register_declarations (FILE *file)
+{
+  /* Iterate through all pseudo-registers beyond virtual registers.  */
+  int maxregs = max_reg_num ();
+  for (int i = LAST_VIRTUAL_REGISTER + 1; i < maxregs; i++)
+    {
+      if (regno_reg_rtx[i] != const0_rtx)
+	{
+	  machine_mode mode = PSEUDO_REGNO_MODE (i);
+
+	  /* Determine if register should be unsigned.
+	     For simplicity, we default to signed types for non-float modes.
+	     This matches common C/C++ semantics.  */
+	  bool unsigned_p = false;
+
+	  /* Skip void mode registers.  */
+	  if (mode == VOIDmode)
+	    continue;
+
+	  const char *type_str = metal_msl_type_from_mode (mode, unsigned_p);
+	  fprintf (file, "  %s _reg%d;\n", type_str, i);
+	}
+    }
+}
+
 /* Implement ASM_DECLARE_FUNCTION_NAME.  Emit [[kernel]] attribute
    for functions marked with the kernel attribute, followed by function
    signature and opening brace.  */
@@ -482,6 +512,9 @@ metal_declare_function_name (FILE *file, const char *name, tree decl)
 
   /* Emit opening brace for function body.  */
   fprintf (file, "\n{\n");
+
+  /* Emit declarations for all pseudo-registers used in this function.  */
+  metal_emit_register_declarations (file);
 }
 
 /* Terminate a function by writing a closing brace to FILE.
