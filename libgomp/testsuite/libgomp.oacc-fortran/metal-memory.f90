@@ -11,6 +11,7 @@ program metal_memory
 
     integer, parameter :: n = 1024
     real(dp) :: a(n), b(n)
+    real(dp) :: sum
     real(dp), allocatable :: c(:), d(:)
     integer :: i, j, errors
 
@@ -126,6 +127,11 @@ program metal_memory
 
     !$acc enter data copyin(a)
 
+    if (.not. acc_is_present(a)) then
+        print *, "Error: a not present after enter data"
+        stop 6
+    end if
+
     !$acc parallel loop present(a)
     do i = 1, n
         a(i) = a(i) * 2.0_dp
@@ -133,6 +139,11 @@ program metal_memory
     !$acc end parallel loop
 
     !$acc exit data copyout(a)
+
+    if (acc_is_present(a)) then
+        print *, "Error: a still present after exit data copyout"
+        stop 7
+    end if
 
     errors = 0
     do i = 1, n
@@ -143,7 +154,24 @@ program metal_memory
 
     if (errors > 0) then
         print *, "Test 5 (present clause) failed:", errors, "errors"
-        stop 6
+        stop 8
+    end if
+
+    ! Test 6: Reduction
+    sum = 0.0_dp
+    do i = 1, n
+        a(i) = real(i, dp)
+    end do
+
+    !$acc parallel loop reduction(+:sum) copyin(a)
+    do i = 1, n
+        sum = sum + a(i)
+    end do
+    !$acc end parallel loop
+
+    if (abs(sum - real(n * (n + 1) / 2, dp)) > 1.0e-6_dp) then
+        print *, "Test 6 (reduction) failed:", sum
+        stop 9
     end if
 
 end program metal_memory
