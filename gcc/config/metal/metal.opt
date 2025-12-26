@@ -21,6 +21,13 @@
 HeaderInclude
 config/metal/metal-opts.h
 
+; The host driver may pass -m64 when invoking the offload compiler.
+; Metal is a 64-bit-only virtual target, so accept -m64 as a no-op for
+; compatibility.
+m64
+Target RejectNegative Mask(ABI64)
+Ignored, but accepted for compatibility.  Only 64-bit ABI is supported.
+
 ; Metal Shading Language version selection
 mmsl=
 Target RejectNegative Joined Enum(msl_version) Var(metal_msl_version) Init(MSL_VERSION_2_4)

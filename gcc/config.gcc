@@ -527,9 +527,11 @@ nvptx-*-*)
 	cxx_target_objs="nvptx-c.o"
 	extra_options="${extra_options} nvptx/nvptx-gen.opt"
 	;;
-	metal-*-*)
-		cpu_type=metal
-		;;
+metal-*-*)
+	cpu_type=metal
+	c_target_objs="metal-c.o"
+	cxx_target_objs="metal-c.o"
+	;;
 or1k*-*-*)
 	cpu_type=or1k
 	;;

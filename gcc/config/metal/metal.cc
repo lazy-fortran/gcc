@@ -29,6 +29,7 @@
 #include "memmodel.h"
 #include "tm_p.h"
 #include "optabs.h"
+#include "regs.h"
 #include "emit-rtl.h"
 #include "recog.h"
 #include "diagnostic.h"
@@ -41,6 +42,8 @@
 #include "expr.h"
 #include "stor-layout.h"
 #include "builtins.h"
+#include "langhooks.h"
+#include "stringpool.h"
 #include "attribs.h"
 #include "gimplify.h"
 #include "omp-general.h"
@@ -48,6 +51,8 @@
 #include "omp-offload.h"
 #include "gomp-constants.h"
 #include "rtl-iter.h"
+
+static bool metal_legitimate_address_p (machine_mode, rtx, bool, code_helper);
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -64,15 +69,6 @@ enum metal_builtins
 };
 
 static GTY(()) tree metal_builtin_decls[METAL_BUILTIN_MAX];
-
-/* Implement TARGET_CPU_CPP_BUILTINS.  */
-
-void
-metal_cpu_cpp_builtins (void)
-{
-  cpp_define (parse_in, "__metal__");
-  cpp_define (parse_in, "__METAL__");
-}
 
 /* Implement TARGET_OPTION_OVERRIDE.  */
 
@@ -243,19 +239,18 @@ metal_addr_space_convert (rtx op, tree from_type, tree to_type)
   if (!from_type || !to_type)
     return op;
 
-  tree from_tree_type = TREE_TYPE (from_type);
-  tree to_tree_type = TREE_TYPE (to_type);
-
-  if (!from_tree_type || !to_tree_type)
+  tree from_ptr_type = TREE_TYPE (from_type);
+  tree to_ptr_type = TREE_TYPE (to_type);
+  if (!from_ptr_type || !to_ptr_type)
     return op;
 
-  addr_space_t from_as = TYPE_ADDR_SPACE (from_tree_type);
-  addr_space_t to_as = TYPE_ADDR_SPACE (to_tree_type);
-
+  addr_space_t from_as = TYPE_ADDR_SPACE (from_ptr_type);
+  addr_space_t to_as = TYPE_ADDR_SPACE (to_ptr_type);
   if (from_as == to_as)
     return op;
 
-  return convert_memory_address (TYPE_MODE (to_type), op);
+  scalar_int_mode to_mode = as_a<scalar_int_mode> (TYPE_MODE (to_ptr_type));
+  return convert_memory_address_addr_space (to_mode, op, to_as);
 }
 
 /* Implement TARGET_FUNCTION_ARG.  */
@@ -308,6 +303,18 @@ static rtx
 metal_static_chain (const_tree, bool)
 {
   return gen_rtx_REG (Pmode, STATIC_CHAIN_REGNUM);
+}
+
+/* Implement TARGET_GET_DRAP_RTX.
+
+   Metal is a virtual offload-only target and does not currently support
+   stack realignment.  Returning NULL here tells the middle-end that DRAP
+   is not needed.  */
+
+static rtx
+metal_get_drap_rtx (void)
+{
+  return NULL_RTX;
 }
 
 /* Implement TARGET_LEGITIMATE_ADDRESS_P.  */
@@ -437,10 +444,18 @@ metal_print_operand (FILE *file, rtx x, int code)
     case 0:
       if (REG_P (x))
 	fprintf (file, "_reg%d", REGNO (x));
+      else if (MEM_P (x))
+	{
+	  fputs ("*(", file);
+	  metal_print_operand_address (file, XEXP (x, 0));
+	  fputs (")", file);
+	}
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
-      else
+      else if (SYMBOL_REF_P (x) || LABEL_REF_P (x))
 	output_addr_const (file, x);
+      else
+	metal_print_operand_address (file, x);
       return;
 
     default:
@@ -454,7 +469,38 @@ metal_print_operand (FILE *file, rtx x, int code)
 void
 metal_print_operand_address (FILE *file, rtx addr)
 {
-  output_addr_const (file, addr);
+  switch (GET_CODE (addr))
+    {
+    case REG:
+      fprintf (file, "_reg%d", REGNO (addr));
+      break;
+
+    case CONST_INT:
+      fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (addr));
+      break;
+
+    case PLUS:
+      {
+	rtx op0 = XEXP (addr, 0);
+	rtx op1 = XEXP (addr, 1);
+	fputs ("(", file);
+	metal_print_operand_address (file, op0);
+	fputs (" + ", file);
+	metal_print_operand_address (file, op1);
+	fputs (")", file);
+      }
+      break;
+
+    case SYMBOL_REF:
+    case LABEL_REF:
+    case CONST:
+      output_addr_const (file, addr);
+      break;
+
+    default:
+      output_addr_const (file, addr);
+      break;
+    }
 }
 
 /* Check if a function should be emitted as a kernel.  */
@@ -476,22 +522,27 @@ metal_emit_register_declarations (FILE *file)
   int maxregs = max_reg_num ();
   for (int i = LAST_VIRTUAL_REGISTER + 1; i < maxregs; i++)
     {
-      if (regno_reg_rtx[i] != const0_rtx)
-	{
-	  machine_mode mode = PSEUDO_REGNO_MODE (i);
+      rtx reg = regno_reg_rtx[i];
+      if (reg == NULL_RTX || reg == const0_rtx)
+	continue;
+      if (!REG_P (reg))
+	continue;
+      if (REGNO (reg) != i)
+	continue;
 
-	  /* Determine if register should be unsigned.
-	     For simplicity, we default to signed types for non-float modes.
-	     This matches common C/C++ semantics.  */
-	  bool unsigned_p = false;
+      machine_mode mode = GET_MODE (reg);
 
-	  /* Skip void mode registers.  */
-	  if (mode == VOIDmode)
-	    continue;
+      /* Determine if register should be unsigned.
+	 For simplicity, we default to signed types for non-float modes.
+	 This matches common C/C++ semantics.  */
+      bool unsigned_p = false;
 
-	  const char *type_str = metal_msl_type_from_mode (mode, unsigned_p);
-	  fprintf (file, "  %s _reg%d;\n", type_str, i);
-	}
+      /* Skip void mode registers.  */
+      if (mode == VOIDmode)
+	continue;
+
+      const char *type_str = metal_msl_type_from_mode (mode, unsigned_p);
+      fprintf (file, "  %s _reg%d;\n", type_str, i);
     }
 }
 
@@ -512,12 +563,10 @@ static void
 metal_write_kernel_params_unpacked (FILE *file, tree fntype, tree decl)
 {
   tree args = TYPE_ARG_TYPES (fntype);
-  bool prototyped = true;
 
   if (!args)
     {
       args = DECL_ARGUMENTS (decl);
-      prototyped = false;
     }
 
   /* Count parameters to determine if we need argument unpacking.  */
@@ -788,6 +837,9 @@ metal_record_offload_symbol (tree decl)
 #undef TARGET_STATIC_CHAIN
 #define TARGET_STATIC_CHAIN metal_static_chain
 
+#undef TARGET_GET_DRAP_RTX
+#define TARGET_GET_DRAP_RTX metal_get_drap_rtx
+
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P metal_legitimate_address_p
 
@@ -813,3 +865,6 @@ metal_record_offload_symbol (tree decl)
 #define TARGET_RECORD_OFFLOAD_SYMBOL metal_record_offload_symbol
 
 struct gcc_target targetm = TARGET_INITIALIZER;
+
+/* This file provides GTY roots in gt-metal.h.  */
+#include "gt-metal.h"

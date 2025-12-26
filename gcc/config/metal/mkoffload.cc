@@ -777,17 +777,25 @@ main (int argc, char **argv)
       obstack_ptr_grow (&argv_obstack, NULL);
       const char **new_argv = XOBFINISH (&argv_obstack, const char **);
 
-      /* mkoffload runs the host driver to produce the intermediate MSL.
-	 For in-tree builds (COLLECT_GCC is typically "xgcc"), make sure the
+      /* mkoffload runs a driver to produce the intermediate MSL.  For
+	 in-tree builds (COLLECT_GCC is typically "xgcc"), make sure the
 	 driver can find its internal executables (lto1/cc1/...) even after
-	 we scrub environment variables below.  */
-      const char *collect_gcc_dir = dirname (ASTRDUP (collect_gcc));
+	 we scrub environment variables below.
+
+	 When OFFLOAD_TARGET_DEFAULT points at an installed offload compiler,
+	 do not inject a -B path for COLLECT_GCC: that would cause the offload
+	 compiler to accidentally pick up the host build-tree's lto1.  */
       bool add_b = false;
-      if (collect_gcc_dir && *collect_gcc_dir)
+      const char *b_dir = NULL;
+      if (driver && collect_gcc && strcmp (driver, collect_gcc) == 0)
 	{
-	  char *lto1 = concat (collect_gcc_dir, "/lto1", NULL);
-	  add_b = (access_check (lto1, X_OK) == 0);
-	  free (lto1);
+	  b_dir = dirname (ASTRDUP (collect_gcc));
+	  if (b_dir && *b_dir)
+	    {
+	      char *lto1 = concat (b_dir, "/lto1", NULL);
+	      add_b = (access_check (lto1, X_OK) == 0);
+	      free (lto1);
+	    }
 	}
       char **exec_argv = CONST_CAST (char **, new_argv);
       if (add_b)
@@ -798,7 +806,7 @@ main (int argc, char **argv)
 	  exec_argv = XNEWVEC (char *, n + 3);
 	  exec_argv[0] = CONST_CAST (char *, new_argv[0]);
 	  exec_argv[1] = CONST_CAST (char *, "-B");
-	  exec_argv[2] = CONST_CAST (char *, collect_gcc_dir);
+	  exec_argv[2] = CONST_CAST (char *, b_dir);
 	  for (unsigned i = 1; i <= n; i++)
 	    exec_argv[i + 2] = CONST_CAST (char *, new_argv[i]);
 	}

@@ -87,11 +87,11 @@
   [(set (match_operand:SI 0 "nonimmediate_operand" "=R,R,m")
 	(match_operand:SI 1 "general_operand" "Ri,m,R"))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  "@
-   %0 = %1;
-   %0 = *(%A1int*)%1;
-   *(%A0int*)%0 = %1;"
-  [(set_attr "type" "move,load,store")])
+	  "@
+	   %0 = %1;
+	   %0 = *(%A1int*)%1;
+	   /* */*(%A0int*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
 
 (define_expand "movdi"
   [(set (match_operand:DI 0 "nonimmediate_operand")
@@ -103,11 +103,11 @@
   [(set (match_operand:DI 0 "nonimmediate_operand" "=R,R,m")
 	(match_operand:DI 1 "general_operand" "Ri,m,R"))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  "@
-   %0 = %1;
-   %0 = *(%A1int64_t*)%1;
-   *(%A0int64_t*)%0 = %1;"
-  [(set_attr "type" "move,load,store")])
+	  "@
+	   %0 = %1;
+	   %0 = *(%A1int64_t*)%1;
+	   /* */*(%A0int64_t*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
 
 (define_expand "movsf"
   [(set (match_operand:SF 0 "nonimmediate_operand")
@@ -119,11 +119,11 @@
   [(set (match_operand:SF 0 "nonimmediate_operand" "=R,R,m")
 	(match_operand:SF 1 "general_operand" "R,m,R"))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  "@
-   %0 = %1;
-   %0 = *(%A1float*)%1;
-   *(%A0float*)%0 = %1;"
-  [(set_attr "type" "move,load,store")])
+	  "@
+	   %0 = %1;
+	   %0 = *(%A1float*)%1;
+	   /* */*(%A0float*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
 
 (define_expand "movdf"
   [(set (match_operand:DF 0 "nonimmediate_operand")
@@ -135,11 +135,11 @@
   [(set (match_operand:DF 0 "nonimmediate_operand" "=R,R,m")
 	(match_operand:DF 1 "general_operand" "R,m,R"))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  "@
-   %0 = %1;
-   %0 = *(%A1double*)%1;
-   *(%A0double*)%0 = %1;"
-  [(set_attr "type" "move,load,store")])
+	  "@
+	   %0 = %1;
+	   %0 = *(%A1double*)%1;
+	   /* */*(%A0double*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
 
 ;; Half-precision floating-point operations
 
@@ -153,11 +153,11 @@
   [(set (match_operand:HF 0 "nonimmediate_operand" "=R,R,m")
 	(match_operand:HF 1 "general_operand" "R,m,R"))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  "@
-   %0 = %1;
-   %0 = *(%A1half*)%1;
-   *(%A0half*)%0 = %1;"
-  [(set_attr "type" "move,load,store")])
+	  "@
+	   %0 = %1;
+	   %0 = *(%A1half*)%1;
+	   /* */*(%A0half*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
 
 (define_insn "extendhfsf2"
   [(set (match_operand:SF 0 "metal_register_operand" "=R")
