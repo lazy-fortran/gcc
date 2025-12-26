@@ -76,6 +76,7 @@ include $(top_srcdir)/plugin/Makefrag.am
 
 if USE_FORTRAN
 libgomp_la_SOURCES += openacc.f90
+libgomp_la_LIBADD += $(if $(wildcard ../libgfortran/.libs/libgfortran.*),-L../libgfortran/.libs -lgfortran,)
 endif
 
 nodist_noinst_HEADERS = libgomp_f.h
