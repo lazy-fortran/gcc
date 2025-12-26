@@ -3973,6 +3973,54 @@ static int last_language_n_infiles;
 
 /* Check that GCC is configured to support the offload target.  */
 
+/* Support shorthand -foffload=TARGET_NAME for configured offload targets
+   where TARGET_NAME is an unambiguous prefix of exactly one configured
+   offload target, followed by '-'.  For example, if OFFLOAD_TARGETS includes
+   'metal-none-none', then accept '-foffload=metal' and canonicalize it to
+   'metal-none-none'.  */
+static bool
+resolve_offload_target_shorthand (const char *target, ptrdiff_t len,
+				  const char **resolved,
+				  ptrdiff_t *resolved_len)
+{
+  /* Only consider shorthand forms; full triplets include '-'.  */
+  if (memchr (target, '-', len) != NULL)
+    return false;
+
+  const char *c = OFFLOAD_TARGETS;
+  const char *match = NULL;
+  ptrdiff_t match_len = 0;
+  int matches = 0;
+
+  while (c)
+    {
+      const char *n = strchr (c, ',');
+      if (n == NULL)
+	n = strchr (c, '\0');
+
+      if (len < n - c
+	  && c[len] == '-'
+	  && strncmp (target, c, len) == 0)
+	{
+	  match = c;
+	  match_len = n - c;
+	  if (++matches > 1)
+	    break;
+	}
+
+      c = *n ? n + 1 : NULL;
+    }
+
+  if (matches == 1)
+    {
+      *resolved = match;
+      *resolved_len = match_len;
+      return true;
+    }
+
+  return false;
+}
+
 static bool
 check_offload_target_name (const char *target, ptrdiff_t len)
 {
@@ -3988,6 +4036,12 @@ check_offload_target_name (const char *target, ptrdiff_t len)
     }
   if (!c)
     {
+      const char *resolved;
+      ptrdiff_t resolved_len;
+      if (resolve_offload_target_shorthand (target, len,
+					    &resolved, &resolved_len))
+	return true;
+
       auto_vec<const char*> candidates;
       size_t olen = strlen (OFFLOAD_TARGETS) + 1;
       char *cand = XALLOCAVEC (char, olen);
@@ -4057,6 +4111,7 @@ handle_foffload_option (const char *arg)
 {
   const char *c, *cur, *n, *next, *end;
   char *target;
+  ptrdiff_t target_len;
 
   /* If option argument starts with '-' then no target is specified and we
      do not need to parse it.  */
@@ -4078,6 +4133,7 @@ handle_foffload_option (const char *arg)
       target = XNEWVEC (char, next - cur + 1);
       memcpy (target, cur, next - cur);
       target[next - cur] = '\0';
+      target_len = next - cur;
 
       /* Reset offloading list and continue.  */
       if (strcmp (target, "default") == 0)
@@ -4090,8 +4146,22 @@ handle_foffload_option (const char *arg)
       /* If 'disable' is passed to the option, clean the list of
 	 offload targets and return, even if more targets follow.
 	 Likewise if GCC is not configured to support that offload target.  */
+      {
+	const char *resolved;
+	ptrdiff_t resolved_len;
+	if (resolve_offload_target_shorthand (target, target_len,
+					      &resolved, &resolved_len))
+	  {
+	    XDELETEVEC (target);
+	    target_len = resolved_len;
+	    target = XNEWVEC (char, target_len + 1);
+	    memcpy (target, resolved, target_len);
+	    target[target_len] = '\0';
+	  }
+      }
+
       if (strcmp (target, "disable") == 0
-	  || !check_offload_target_name (target, next - cur))
+	  || !check_offload_target_name (target, target_len))
 	{
 	  free (offload_targets);
 	  offload_targets = xstrdup ("");
@@ -4113,7 +4183,7 @@ handle_foffload_option (const char *arg)
 	      if (n == NULL)
 		n = strchr (c, '\0');
 
-	      if (next - cur == n - c && strncmp (c, target, n - c) == 0)
+	      if (target_len == n - c && strncmp (c, target, n - c) == 0)
 		break;
 
 	      c = n + 1;
@@ -4126,9 +4196,10 @@ handle_foffload_option (const char *arg)
 	      size_t offload_targets_len = strlen (offload_targets);
 	      offload_targets
 		= XRESIZEVEC (char, offload_targets,
-			      offload_targets_len + 1 + next - cur + 1);
+			      offload_targets_len + 1 + target_len + 1);
 	      offload_targets[offload_targets_len++] = ':';
-	      memcpy (offload_targets + offload_targets_len, target, next - cur + 1);
+	      memcpy (offload_targets + offload_targets_len, target,
+		      target_len + 1);
 	    }
 	}
 next_item:
