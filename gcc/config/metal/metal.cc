@@ -47,6 +47,7 @@
 #include "omp-low.h"
 #include "omp-offload.h"
 #include "gomp-constants.h"
+#include "rtl-iter.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -375,19 +376,76 @@ metal_msl_type_from_mode (machine_mode mode, bool unsigned_p)
     }
 }
 
-/* Implement PRINT_OPERAND.  */
+/* Return the Metal address space qualifier string for a given address space.  */
+
+static const char *
+metal_addrspace_string (addr_space_t as)
+{
+  switch (as)
+    {
+    case ADDR_SPACE_GENERIC:
+      return "";
+    case ADDR_SPACE_DEVICE:
+      return "device ";
+    case ADDR_SPACE_THREADGROUP:
+      return "threadgroup ";
+    case ADDR_SPACE_CONSTANT:
+      return "constant ";
+    default:
+      gcc_unreachable ();
+    }
+}
+
+/* Extract address space from a memory RTX.  */
+
+static addr_space_t
+metal_mem_addr_space (rtx mem)
+{
+  gcc_assert (MEM_P (mem));
+
+  const_rtx addr = XEXP (mem, 0);
+  subrtx_iterator::array_type array;
+  FOR_EACH_SUBRTX (iter, array, addr, ALL)
+    if (SYMBOL_REF_P (*iter))
+      {
+	tree decl = SYMBOL_REF_DECL (*iter);
+	if (decl && TREE_CODE (decl) == VAR_DECL)
+	  return TYPE_ADDR_SPACE (TREE_TYPE (decl));
+      }
+
+  return ADDR_SPACE_GENERIC;
+}
+
+/* Implement PRINT_OPERAND.
+
+   Supported codes:
+   'A' - Print address space qualifier for memory operand.  */
 
 void
 metal_print_operand (FILE *file, rtx x, int code)
 {
-  if (code == 0)
+  switch (code)
     {
+    case 'A':
+      if (MEM_P (x))
+	{
+	  addr_space_t as = metal_mem_addr_space (x);
+	  fputs (metal_addrspace_string (as), file);
+	}
+      return;
+
+    case 0:
       if (REG_P (x))
 	fprintf (file, "r%d", REGNO (x));
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
       else
 	output_addr_const (file, x);
+      return;
+
+    default:
+      output_operand_lossage ("invalid %%code for print_operand");
+      return;
     }
 }
 
