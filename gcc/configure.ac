@@ -1186,6 +1186,9 @@ for tgt in `echo $enable_offload_targets | sed 's/,/ /g'`; do
     metal*)
   	omp_device_property=omp-device-properties-metal
   	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/metal/t-omp-device"
+  	# Metal mkoffload runs on the host (calls xcrun metal), not as a cross-compiler.
+  	# Include t-metal to build mkoffload as part of the host compiler.
+  	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/metal/t-metal"
   	;;
     *)
   	AC_MSG_ERROR([unknown offload target specified])
