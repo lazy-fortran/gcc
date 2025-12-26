@@ -616,6 +616,61 @@ metal_function_end (FILE *file)
   fprintf (file, "}\n");
 }
 
+/* Implement ASM_DECLARE_OBJECT_NAME.  Emit variable declaration with
+   appropriate address space qualifier.  */
+
+void
+metal_declare_object_name (FILE *file, const char *name, const_tree decl)
+{
+  tree type = TREE_TYPE (decl);
+  tree size_unit = DECL_SIZE_UNIT (decl);
+  HOST_WIDE_INT obj_size = 0;
+  if (size_unit && tree_fits_shwi_p (size_unit))
+    obj_size = tree_to_shwi (size_unit);
+  addr_space_t as = TYPE_ADDR_SPACE (type);
+  const char *addrspace = metal_addrspace_string (as);
+
+  /* Default to device address space for global variables without explicit space.  */
+  if (as == ADDR_SPACE_GENERIC)
+    addrspace = "device ";
+
+  fprintf (file, "// Variable: %s (size=%ld)\n", name, (long)obj_size);
+  fprintf (file, "%s", addrspace);
+
+  /* Emit type information - this is a placeholder.
+     Full type emission would require more complex logic.  */
+  fprintf (file, "/* %s */ char %s[%ld];\n",
+	   TREE_PUBLIC (decl) ? "public" : "local",
+	   name, (long)obj_size);
+}
+
+/* Implement ASM_OUTPUT_ALIGNED_DECL_COMMON and ASM_OUTPUT_ALIGNED_DECL_LOCAL.
+   Emit common or local variable declaration.  */
+
+void
+metal_output_aligned_decl (FILE *file, const char *name, const_tree decl,
+			    HOST_WIDE_INT size, unsigned int align)
+{
+  tree type = TREE_TYPE (decl);
+  addr_space_t as = TYPE_ADDR_SPACE (type);
+  const char *addrspace = metal_addrspace_string (as);
+
+  /* Default to device address space for variables without explicit space.  */
+  if (as == ADDR_SPACE_GENERIC)
+    addrspace = "device ";
+
+  fprintf (file, "// %s variable: %s (size=%ld, align=%u)\n",
+	   TREE_PUBLIC (decl) ? "Common" : "Local",
+	   name, (long)size, align);
+  fprintf (file, "%s", addrspace);
+
+  /* Emit type information - this is a placeholder.
+     Full type emission would require more complex logic.  */
+  fprintf (file, "/* %s */ char %s[%ld];\n",
+	   TREE_PUBLIC (decl) ? "common" : "local",
+	   name, (long)size);
+}
+
 /* Implement TARGET_ASM_FILE_START.  */
 
 static void

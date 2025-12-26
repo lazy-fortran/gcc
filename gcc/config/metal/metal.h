@@ -191,6 +191,9 @@ struct metal_args {
 #define ASM_OUTPUT_ALIGN(FILE, POWER) \
   fprintf (FILE, "\t// .align %d\n", 1 << (POWER))
 
+#define ASM_OUTPUT_SKIP(FILE, N) \
+  fprintf (FILE, "\t// .skip %d\n", (int)(N))
+
 #define PRINT_OPERAND(FILE, X, CODE) metal_print_operand (FILE, X, CODE)
 #define PRINT_OPERAND_ADDRESS(FILE, ADDR) \
   metal_print_operand_address (FILE, ADDR)
@@ -198,11 +201,25 @@ struct metal_args {
 #define ASM_OUTPUT_LABELREF(FILE, NAME) \
   fputs (NAME, FILE)
 
+#define ASM_GENERATE_INTERNAL_LABEL(LABEL, PREFIX, NUM) \
+  snprintf (LABEL, 100, "*%s%ld", PREFIX, (long)(NUM))
+
+#define ASM_DECLARE_OBJECT_NAME(FILE, NAME, DECL) \
+  metal_declare_object_name (FILE, NAME, DECL)
+
 #define ASM_DECLARE_FUNCTION_NAME(FILE, NAME, DECL) \
   metal_declare_function_name (FILE, NAME, DECL)
 
 #define ASM_DECLARE_FUNCTION_SIZE(STREAM, NAME, DECL) \
   metal_function_end (STREAM)
+
+#undef  ASM_OUTPUT_ALIGNED_DECL_COMMON
+#define ASM_OUTPUT_ALIGNED_DECL_COMMON(FILE, DECL, NAME, SIZE, ALIGN) \
+  metal_output_aligned_decl (FILE, NAME, DECL, SIZE, ALIGN)
+
+#undef  ASM_OUTPUT_ALIGNED_DECL_LOCAL
+#define ASM_OUTPUT_ALIGNED_DECL_LOCAL(FILE, DECL, NAME, SIZE, ALIGN) \
+  metal_output_aligned_decl (FILE, NAME, DECL, SIZE, ALIGN)
 
 #define GLOBAL_ASM_OP "// .global "
 

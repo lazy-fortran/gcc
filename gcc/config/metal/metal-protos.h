@@ -24,6 +24,9 @@ extern void metal_cpu_cpp_builtins (void);
 extern void metal_print_operand (FILE *, rtx, int);
 extern void metal_print_operand_address (FILE *, rtx);
 extern void metal_declare_function_name (FILE *, const char *, tree);
+extern void metal_declare_object_name (FILE *, const char *, const_tree);
+extern void metal_output_aligned_decl (FILE *, const char *, const_tree,
+					HOST_WIDE_INT, unsigned int);
 extern void metal_function_end (FILE *);
 
 #endif /* GCC_METAL_PROTOS_H */
