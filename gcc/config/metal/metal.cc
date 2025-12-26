@@ -336,6 +336,41 @@ metal_legitimate_address_p (machine_mode mode, rtx x, bool strict,
   return false;
 }
 
+/* Return the MSL type name for a given machine mode and signedness.
+   This is used for generating proper type casts in MSL output.
+
+   Note: Unlike NVPTX which uses a 'promote' parameter, MSL requires
+   signedness distinction (int vs uint) for integer types, hence the
+   unsigned_p parameter.  */
+
+static const char *
+metal_msl_type_from_mode (machine_mode mode, bool unsigned_p)
+{
+  switch (mode)
+    {
+    case E_BImode:
+      return "bool";
+    case E_QImode:
+      return unsigned_p ? "uchar" : "char";
+    case E_HImode:
+      return unsigned_p ? "ushort" : "short";
+    case E_SImode:
+      return unsigned_p ? "uint" : "int";
+    case E_DImode:
+      return unsigned_p ? "ulong" : "long";
+    case E_HFmode:
+      return "half";
+    case E_SFmode:
+      return "float";
+    /* E_DFmode: Metal Shading Language does not support double-precision
+       floating-point types per Apple Metal Shading Language Spec v3.2.
+       If we reach this case, it indicates a configuration error or
+       unsupported operation.  */
+    default:
+      gcc_unreachable ();
+    }
+}
+
 /* Implement PRINT_OPERAND.  */
 
 void
