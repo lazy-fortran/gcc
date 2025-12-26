@@ -1272,89 +1272,7 @@
   ""
   "if (%1 %c0 %2) goto %l3;"
   [(set_attr "type" "branch")])
-(define_expand "cbranchdi4"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:DI 1 "metal_register_operand")
-			 (match_operand:DI 2 "metal_nonmemory_operand")])
-		      (label_ref (match_operand 3 ""))
-		      (pc)))]
-  ""
-  "")
-
-(define_insn "*branch_di"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:DI 1 "metal_register_operand" "R")
-			 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")])
-		      (label_ref (match_operand 3 "" ""))
-		      (pc)))]
-  ""
-  "if (%1 %c0 %2) goto %l3;"
-  [(set_attr "type" "branch")])
-
-(define_expand "cbranchsf4"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:SF 1 "metal_register_operand")
-			 (match_operand:SF 2 "metal_register_operand")])
-		      (label_ref (match_operand 3 ""))
-		      (pc)))]
-  ""
-  "")
-
-(define_insn "*branch_sf"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:SF 1 "metal_register_operand" "R")
-			 (match_operand:SF 2 "metal_register_operand" "R")])
-		      (label_ref (match_operand 3 "" ""))
-		      (pc)))]
-  ""
-  "if (%1 %c0 %2) goto %l3;"
-  [(set_attr "type" "fpu")])
-
-(define_expand "cbranchdf4"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:DF 1 "metal_register_operand")
-			 (match_operand:DF 2 "metal_register_operand")])
-		      (label_ref (match_operand 3 ""))
-		      (pc)))]
-  ""
-  "")
-
-(define_insn "*branch_df"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:DF 1 "metal_register_operand" "R")
-			 (match_operand:DF 2 "metal_register_operand" "R")])
-		      (label_ref (match_operand 3 "" ""))
-		      (pc)))]
-  ""
-  "if (%1 %c0 %2) goto %l3;"
-  [(set_attr "type" "fpu")])
-
-(define_expand "cbranchhf4"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:HF 1 "metal_register_operand")
-			 (match_operand:HF 2 "metal_register_operand")])
-		      (label_ref (match_operand 3 ""))
-		      (pc)))]
-  ""
-  "")
-
-(define_insn "*branch_hf"
-  [(set (pc)
-	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:HF 1 "metal_register_operand" "R")
-			 (match_operand:HF 2 "metal_register_operand" "R")])
-		      (label_ref (match_operand 3 "" ""))
-		      (pc)))]
-  ""
-  "if (%1 %c0 %2) goto %l3;"
-  [(set_attr "type" "fpu")])
+;; (Duplicate cbranch* patterns removed; see earlier definitions.)
 
 
 ;; Conditional store patterns (cstore)
@@ -1723,22 +1641,22 @@
 })
 
 (define_expand "save_stack_block"
-  [(set (match_operand:DI 0 "metal_register_operand")
-        (reg:DI 1))]
+  [(match_operand 0 "register_operand" "")
+   (match_operand 1 "register_operand" "")]
   ""
 {
-  /* Save current stack pointer to operands[0].  */
-  emit_move_insn (operands[0], gen_rtx_REG (DImode, STACK_POINTER_REGNUM));
+  /* See other offload-style backends (e.g. nvptx): GCC may synthesize
+     stack save/restore in cases that cannot be optimized away.  */
+  emit_move_insn (operands[0], operands[1]);
   DONE;
 })
 
 (define_expand "restore_stack_block"
-  [(set (reg:DI 1)
-        (match_operand:DI 1 "metal_register_operand"))]
+  [(match_operand 0 "register_operand" "")
+   (match_operand 1 "register_operand" "")]
   ""
 {
-  /* Restore stack pointer from operands[1].  */
-  emit_move_insn (gen_rtx_REG (DImode, STACK_POINTER_REGNUM), operands[1]);
+  emit_move_insn (operands[0], operands[1]);
   DONE;
 })
 

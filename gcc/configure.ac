@@ -1178,14 +1178,17 @@ for tgt in `echo $enable_offload_targets | sed 's/,/ /g'`; do
     amdgcn*)
   	omp_device_property=omp-device-properties-gcn
   	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/gcn/t-omp-device"
+	offload_mkoffload_tmake_file="${offload_mkoffload_tmake_file} \$(srcdir)/config/gcn/t-gcn-hsa"
   	;;
     nvptx*)
   	omp_device_property=omp-device-properties-nvptx
   	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/nvptx/t-omp-device"
+	offload_mkoffload_tmake_file="${offload_mkoffload_tmake_file} \$(srcdir)/config/nvptx/t-nvptx"
   	;;
     metal*)
   	omp_device_property=omp-device-properties-metal
   	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/metal/t-omp-device"
+	offload_mkoffload_tmake_file="${offload_mkoffload_tmake_file} \$(srcdir)/config/metal/t-metal"
   	;;
     *)
   	AC_MSG_ERROR([unknown offload target specified])
@@ -2417,7 +2420,7 @@ do
 		tmake_file_="${tmake_file_} \$(srcdir)/config/$f"
 	fi
 done
-tmake_file="${tmake_file_}${omp_device_property_tmake_file}"
+tmake_file="${tmake_file_}${omp_device_property_tmake_file}${offload_mkoffload_tmake_file}"
 
 out_object_file=`basename $out_file .cc`.o
 common_out_object_file=`basename $common_out_file .cc`.o

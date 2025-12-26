@@ -20,20 +20,16 @@
 #ifndef GCC_METAL_H
 #define GCC_METAL_H
 
-/* MSL (Metal Shading Language) version constants.  */
-enum msl_version {
-  MSL_VERSION_2_4 = 24,
-  MSL_VERSION_3_0 = 30,
-  MSL_VERSION_3_1 = 31
-};
+/* Option-related types.  */
+#include "config/metal/metal-opts.h"
 
-/* Address space qualifiers for Metal.  */
-enum metal_addr_space {
-  ADDR_SPACE_GENERIC = 0,
-  ADDR_SPACE_DEVICE,
-  ADDR_SPACE_THREADGROUP,
-  ADDR_SPACE_CONSTANT
-};
+/* Address space qualifiers for Metal.
+
+   GCC reserves ADDR_SPACE_GENERIC as the "generic" address space number
+   (see coretypes.h).  Define additional target address spaces here.  */
+#define ADDR_SPACE_DEVICE 1
+#define ADDR_SPACE_THREADGROUP 2
+#define ADDR_SPACE_CONSTANT 3
 
 /* Run-time Target.  */
 
@@ -232,10 +228,11 @@ struct metal_args {
 #define NO_DOT_IN_LABEL
 #define ASM_OUTPUT_DEF(FILE, ALIAS, NAME) do { } while (0)
 
+#define SLOW_BYTE_ACCESS 0
+
 #define CASE_VECTOR_MODE SImode
 #define FUNCTION_MODE QImode
 #define MOVE_MAX 8
-#define TRULY_NOOP_TRUNCATION(op, ip) 1
 #define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) ((VALUE) = 0, 0)
 #define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) ((VALUE) = 0, 0)
 

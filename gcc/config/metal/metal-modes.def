@@ -1,0 +1,4 @@
+/* Extra machine modes for Metal.  */
+
+FLOAT_MODE (HF, 2, ieee_half_format);  /* HFmode */
+

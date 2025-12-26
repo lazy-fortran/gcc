@@ -528,9 +528,25 @@ compile_native (const char *infile, const char *outfile, const char *compiler,
     fatal_error (input_location,
 		 "environment variable COLLECT_GCC_OPTIONS must be set");
 
+  /* If we're using an in-tree driver (typically xgcc), add -B<dir> so it can
+     locate its internal executables (lto1/cc1/...).  */
+  const char *compiler_dir = dirname (ASTRDUP (compiler));
+  bool add_b = false;
+  if (compiler_dir && *compiler_dir)
+    {
+      char *lto1 = concat (compiler_dir, "/lto1", NULL);
+      add_b = (access_check (lto1, X_OK) == 0);
+      free (lto1);
+    }
+
   struct obstack argv_obstack;
   obstack_init (&argv_obstack);
   obstack_ptr_grow (&argv_obstack, compiler);
+  if (add_b)
+    {
+      obstack_ptr_grow (&argv_obstack, "-B");
+      obstack_ptr_grow (&argv_obstack, compiler_dir);
+    }
   if (fPIC)
     obstack_ptr_grow (&argv_obstack, "-fPIC");
   if (fpic)
@@ -592,6 +608,17 @@ main (int argc, char **argv)
 	  sprintf (driver_buf, "%s/%s", gcc_path, GCC_INSTALL_NAME);
 	  if (access_check (driver_buf, X_OK) == 0)
 	    found = true;
+	  else if (access_check (collect_gcc, X_OK) == 0)
+	    {
+	      /* In build-tree builds, COLLECT_GCC is usually "xgcc", not
+		 GCC_INSTALL_NAME.  Fall back to COLLECT_GCC itself so that
+		 mkoffload can run without requiring an installed driver or
+		 manual OFFLOAD_TARGET_DEFAULT setup.  */
+	      driver = collect_gcc;
+	      found = true;
+	      XDELETEVEC (driver_buf);
+	      driver_buf = NULL;
+	    }
 	}
       else
 	found = true;
@@ -621,7 +648,9 @@ main (int argc, char **argv)
 		     "or setting %<OFFLOAD_TARGET_DEFAULT%>)",
 		     GCC_INSTALL_NAME);
 
-      if (gcc_path == NULL)
+      if (driver)
+	;
+      else if (gcc_path == NULL)
 	driver = GCC_INSTALL_NAME;
       else
 	driver = driver_buf;
@@ -748,6 +777,32 @@ main (int argc, char **argv)
       obstack_ptr_grow (&argv_obstack, NULL);
       const char **new_argv = XOBFINISH (&argv_obstack, const char **);
 
+      /* mkoffload runs the host driver to produce the intermediate MSL.
+	 For in-tree builds (COLLECT_GCC is typically "xgcc"), make sure the
+	 driver can find its internal executables (lto1/cc1/...) even after
+	 we scrub environment variables below.  */
+      const char *collect_gcc_dir = dirname (ASTRDUP (collect_gcc));
+      bool add_b = false;
+      if (collect_gcc_dir && *collect_gcc_dir)
+	{
+	  char *lto1 = concat (collect_gcc_dir, "/lto1", NULL);
+	  add_b = (access_check (lto1, X_OK) == 0);
+	  free (lto1);
+	}
+      char **exec_argv = CONST_CAST (char **, new_argv);
+      if (add_b)
+	{
+	  unsigned n = 0;
+	  while (new_argv[n])
+	    n++;
+	  exec_argv = XNEWVEC (char *, n + 3);
+	  exec_argv[0] = CONST_CAST (char *, new_argv[0]);
+	  exec_argv[1] = CONST_CAST (char *, "-B");
+	  exec_argv[2] = CONST_CAST (char *, collect_gcc_dir);
+	  for (unsigned i = 1; i <= n; i++)
+	    exec_argv[i + 2] = CONST_CAST (char *, new_argv[i]);
+	}
+
       char *execpath = getenv ("GCC_EXEC_PREFIX");
       char *cpath = getenv ("COMPILER_PATH");
       char *lpath = getenv ("LIBRARY_PATH");
@@ -761,10 +816,12 @@ main (int argc, char **argv)
 	omp_requires_file = make_temp_file (".mkoffload.omp_requires");
 
       xputenv (concat ("GCC_OFFLOAD_OMP_REQUIRES_FILE=", omp_requires_file, NULL));
-      fork_execute (new_argv[0], CONST_CAST (char **, new_argv), true,
+      fork_execute (exec_argv[0], exec_argv, true,
 		    ".gcc_args");
       obstack_free (&argv_obstack, NULL);
       unsetenv ("GCC_OFFLOAD_OMP_REQUIRES_FILE");
+      if (add_b)
+	XDELETEVEC (exec_argv);
 
       if (execpath)
 	xputenv (concat ("GCC_EXEC_PREFIX=", execpath, NULL));

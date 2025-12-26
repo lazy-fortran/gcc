@@ -18,9 +18,6 @@
 # along with GCC; see the file COPYING3.  If not see
 # <http://www.gnu.org/licenses/>.
 
-# Target machine header dependency.
-TM_H += $(srcdir)/config/metal/metal.h
-
 # mkoffload build rules.
 CFLAGS-mkoffload.o += $(DRIVER_DEFINES) \
 	-DGCC_INSTALL_NAME=\"$(GCC_INSTALL_NAME)\"

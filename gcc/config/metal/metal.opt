@@ -19,7 +19,7 @@
 ; <http://www.gnu.org/licenses/>.
 
 HeaderInclude
-config/metal/metal.h
+config/metal/metal-opts.h
 
 ; Metal Shading Language version selection
 mmsl=

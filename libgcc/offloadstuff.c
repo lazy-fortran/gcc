@@ -42,9 +42,15 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #if defined(HAVE_GAS_HIDDEN) && ENABLE_OFFLOADING == 1
 
+#if OBJECT_FORMAT_MACHO
+#define OFFLOAD_VAR_TABLE_SECTION_NAME "__GNU_OFFLOAD,__vars"
+#define OFFLOAD_FUNC_TABLE_SECTION_NAME "__GNU_OFFLOAD,__funcs"
+#define OFFLOAD_IND_FUNC_TABLE_SECTION_NAME "__GNU_OFFLOAD,__ind_fns"
+#else
 #define OFFLOAD_FUNC_TABLE_SECTION_NAME ".gnu.offload_funcs"
 #define OFFLOAD_IND_FUNC_TABLE_SECTION_NAME ".gnu.offload_ind_funcs"
 #define OFFLOAD_VAR_TABLE_SECTION_NAME ".gnu.offload_vars"
+#endif
 
 #ifdef CRT_BEGIN
 

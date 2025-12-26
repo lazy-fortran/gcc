@@ -527,10 +527,9 @@ nvptx-*-*)
 	cxx_target_objs="nvptx-c.o"
 	extra_options="${extra_options} nvptx/nvptx-gen.opt"
 	;;
-metal-*-*)
-	cpu_type=metal
-	extra_options="${extra_options} metal/metal.opt"
-	;;
+	metal-*-*)
+		cpu_type=metal
+		;;
 or1k*-*-*)
 	cpu_type=or1k
 	;;
@@ -2968,13 +2967,18 @@ nvptx-*)
 		tm_file="${tm_file} nvptx/offload.h"
 	fi
 	;;
-metal-*)
-	tmake_file="metal/t-metal"
-	if test x$enable_as_accelerator = xyes; then
-		extra_programs="${extra_programs} mkoffload\$(exeext)"
-		tm_file="${tm_file} metal/offload.h"
-	fi
-	;;
+	metal-*)
+		tmake_file="metal/t-metal"
+		# Metal Shading Language supports floating-point types, including
+		# half precision, so enable floating-point modes by default.
+		if test x$with_float = x; then
+			with_float=hard
+		fi
+		if test x$enable_as_accelerator = xyes; then
+			extra_programs="${extra_programs} mkoffload\$(exeext)"
+			tm_file="${tm_file} metal/offload.h"
+		fi
+		;;
 or1k*-*-*)
 	tm_file="elfos.h ${tm_file}"
 	tmake_file="${tmake_file} or1k/t-or1k"
@@ -4316,9 +4320,9 @@ fi
 # supported_defaults.
 
 supported_defaults=
-case "${target}" in
-	aarch64*-*-*)
-		supported_defaults="abi cpu cpu_64 arch arch_64 tune tune_64"
+	case "${target}" in
+		aarch64*-*-*)
+			supported_defaults="abi cpu cpu_64 arch arch_64 tune tune_64"
 		if test x$with_cpu_64 != x && test x$with_cpu = x; then
 			with_cpu=$with_cpu_64
 		fi
@@ -4389,13 +4393,17 @@ case "${target}" in
 			    exit 1
 			  fi
 			fi
-		done
-		;;
+			done
+			;;
 
-	alpha*-*-*)
-		supported_defaults="cpu tune"
-		for which in cpu tune; do
-			eval "val=\$with_$which"
+		metal-*)
+			supported_defaults="float"
+			;;
+
+		alpha*-*-*)
+			supported_defaults="cpu tune"
+			for which in cpu tune; do
+				eval "val=\$with_$which"
 			case "$val" in
 			"" \
 			| ev4 | ev45 | 21064 | ev5 | 21164 | ev56 | 21164a \

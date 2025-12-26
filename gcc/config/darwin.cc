@@ -2105,6 +2105,9 @@ darwin_label_is_anonymous_local_objc_name (const char *name)
 /* Count lto section numbers.  */
 static unsigned int lto_section_num = 0;
 
+/* Count offload-lto section numbers.  */
+static unsigned int offload_lto_section_num = 0;
+
 /* A vector of information about LTO sections, at present, we only have
    the name.  TODO: see if we can get the data length somehow.  */
 typedef struct GTY (()) darwin_lto_section_e {
@@ -2112,6 +2115,9 @@ typedef struct GTY (()) darwin_lto_section_e {
 } darwin_lto_section_e ;
 
 static GTY (()) vec<darwin_lto_section_e, va_gc> *lto_section_names;
+static GTY (()) vec<darwin_lto_section_e, va_gc> *offload_lto_section_names;
+
+#define OFFLOAD_LTO_SEGMENT_NAME "__GNU_OFFLD_LTO"
 
 /* Section wrapper scheme (used here to wrap the unlimited number of LTO
    sections into three Mach-O ones).
@@ -2198,6 +2204,34 @@ darwin_asm_named_section (const char *name,
       if (lto_section_names == NULL)
         vec_alloc (lto_section_names, 16);
       vec_safe_push (lto_section_names, e);
+   }
+  else if (startswith (name, OFFLOAD_SECTION_NAME_PREFIX))
+    {
+      darwin_lto_section_e e;
+      /* Offload LTO section content is streamed like normal LTO but uses a
+	 different prefix on Mach-O.  Wrap these sections too, otherwise the
+	 resulting "__SEG,SECT" names can exceed the Mach-O 16-byte limit.  */
+      gcc_assert ((flags & SECTION_NAMED) == SECTION_NAMED);
+
+      fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
+	       OFFLOAD_LTO_SEGMENT_NAME, LTO_SECTS_SECTION);
+      fprintf (asm_out_file, "L_GNU_OFFLD_LTO%d:\t;# %s\n",
+	       offload_lto_section_num, name);
+      fprintf (asm_out_file,
+	       "\t.set L$gnu$offld$lto$offs%d,L_GNU_OFFLD_LTO%d-L_GNU_OFFLD_LTO0\n",
+	       offload_lto_section_num, offload_lto_section_num);
+      fprintf (asm_out_file,
+	       "\t.set L$gnu$offld$lto$size%d,L_GNU_OFFLD_LTO%d-L_GNU_OFFLD_LTO%d\n",
+	       offload_lto_section_num, offload_lto_section_num + 1,
+	       offload_lto_section_num);
+      offload_lto_section_num++;
+      /* The section name recorded in the wrapper tables must match what
+	 tooling will look for via the segment/section split, i.e. just the
+	 part after the comma.  */
+      e.sectname = xstrdup (name + strlen (OFFLOAD_SECTION_NAME_PREFIX));
+      if (offload_lto_section_names == NULL)
+	vec_alloc (offload_lto_section_names, 16);
+      vec_safe_push (offload_lto_section_names, e);
    }
   else if (startswith (name, "__DWARF,"))
     darwin_asm_dwarf_section (name, flags, decl, false);
@@ -3588,13 +3622,16 @@ darwin_file_end (void)
 	  lto_asm_txt = buf = (char *) xmalloc (n + 1);
 	  while (fgets (lto_asm_txt, n, lto_asm_out_file))
 	    fputs (lto_asm_txt, asm_out_file);
-	  /* Put a termination label.  */
-	  fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
-		   LTO_SEGMENT_NAME, LTO_SECTS_SECTION);
-	  fprintf (asm_out_file, "L_GNU_LTO%d:\t;# end of lto\n",
-		   lto_section_num);
-	  /* Make sure our termination label stays in this section.  */
-	  fputs ("\t.space\t1\n", asm_out_file);
+	  /* Put a termination label if we output any wrapped LTO sections.  */
+	  if (lto_section_num)
+	    {
+	      fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
+		       LTO_SEGMENT_NAME, LTO_SECTS_SECTION);
+	      fprintf (asm_out_file, "L_GNU_LTO%d:\t;# end of lto\n",
+		       lto_section_num);
+	      /* Make sure our termination label stays in this section.  */
+	      fputs ("\t.space\t1\n", asm_out_file);
+	    }
 	}
 
       /* Remove the temporary file.  */
@@ -3645,6 +3682,54 @@ darwin_file_end (void)
 	  fprintf (asm_out_file, "%s L$gnu$lto$size%d\n", op, count);
 	  fprintf (asm_out_file, "%s L$gnu$lto$noff%d\n", op, count);
 	  fprintf (asm_out_file, "%s L$gnu$lto$nsiz%d\n", op, count);
+	}
+    }
+
+  /* Terminate and emit wrapper tables for offload LTO sections.  */
+  if (offload_lto_section_names && offload_lto_section_names->length ())
+    {
+      int count;
+      darwin_lto_section_e *ref;
+      const char *op = integer_asm_op (4, 0);
+
+      /* Termination label for the wrapped data.  */
+      fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
+	       OFFLOAD_LTO_SEGMENT_NAME, LTO_SECTS_SECTION);
+      fprintf (asm_out_file, "L_GNU_OFFLD_LTO%d:\t;# end of offload lto\n",
+	       offload_lto_section_num);
+      fputs ("\t.space\t1\n", asm_out_file);
+
+      /* Emit the names.  */
+      fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
+	       OFFLOAD_LTO_SEGMENT_NAME, LTO_NAMES_SECTION);
+      FOR_EACH_VEC_ELT (*offload_lto_section_names, count, ref)
+	{
+	  fprintf (asm_out_file, "L_GNU_OFFLD_LTO_NAME%d:\n", count);
+	  fprintf (asm_out_file,
+		   "\t.set L$gnu$offld$lto$noff%d,L_GNU_OFFLD_LTO_NAME%d-L_GNU_OFFLD_LTO_NAME0\n",
+		   count, count);
+	  fprintf (asm_out_file,
+		   "\t.set L$gnu$offld$lto$nsiz%d,L_GNU_OFFLD_LTO_NAME%d-L_GNU_OFFLD_LTO_NAME%d\n",
+		   count, count + 1, count);
+	  fprintf (asm_out_file, "\t.asciz\t\"%s\"\n", ref->sectname);
+	}
+      fprintf (asm_out_file, "L_GNU_OFFLD_LTO_NAME%d:\t;# end\n",
+	       offload_lto_section_num);
+      fputs ("\t.space\t1\n", asm_out_file);
+
+      /* Emit the Index.  */
+      fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
+	       OFFLOAD_LTO_SEGMENT_NAME, LTO_INDEX_SECTION);
+      fputs ("\t.align\t2\n", asm_out_file);
+      fputs ("# Section offset, Section length, Name offset, Name length\n",
+	     asm_out_file);
+      FOR_EACH_VEC_ELT (*offload_lto_section_names, count, ref)
+	{
+	  fprintf (asm_out_file, "%s L$gnu$offld$lto$offs%d\t;# %s\n",
+		   op, count, ref->sectname);
+	  fprintf (asm_out_file, "%s L$gnu$offld$lto$size%d\n", op, count);
+	  fprintf (asm_out_file, "%s L$gnu$offld$lto$noff%d\n", op, count);
+	  fprintf (asm_out_file, "%s L$gnu$offld$lto$nsiz%d\n", op, count);
 	}
     }
 
