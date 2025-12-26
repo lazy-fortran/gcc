@@ -38,8 +38,6 @@
 #include <libgen.h>
 #include "collect-utils.h"
 #include "gomp-constants.h"
-#include "simple-object.h"
-#include "lto-section-names.h"
 
 const char tool_name[] = "metal mkoffload";
 
@@ -128,108 +126,9 @@ xputenv (const char *string)
   putenv (CONST_CAST (char *, string));
 }
 
-/* Structure to track extracted LTO bytecode files.  */
-struct lto_temp_file
-{
-  const char *path;
-  struct lto_temp_file *next;
-};
-
-static struct lto_temp_file *lto_temp_files = NULL;
-
-/* Callback for simple_object_find_sections to locate offload LTO sections.
-   This callback is invoked for each section found in the input object file.
-   We filter for sections with the OFFLOAD_SECTION_NAME_PREFIX
-   (e.g., ".gnu.offload_lto_" on ELF systems).
-
-   TODO (issue #34): Implement actual bytecode extraction to temporary files
-   for recompilation.  Currently we only count sections for verification.  */
-
-struct find_lto_sections_data
-{
-  simple_object_read *sobj;
-  const char *obj_filename;
-  int fd;
-  unsigned section_count;
-};
-
-static int
-find_lto_sections_callback (void *data, const char *name, off_t offset,
-			     off_t length)
-{
-  struct find_lto_sections_data *d = (struct find_lto_sections_data *) data;
-
-  /* Check if this is an offload LTO section.  */
-  if (!startswith (name, OFFLOAD_SECTION_NAME_PREFIX))
-    return 1;
-
-  if (verbose)
-    fprintf (stderr, "Found offload LTO section: %s (offset=%lld, len=%lld)\n",
-	     name, (long long) offset, (long long) length);
-
-  /* TODO (issue #34): Extract this section to a temporary file.
-     For now, we just count sections to verify the infrastructure works.  */
-  d->section_count++;
-
-  return 1;
-}
-
-/* Process a single object file and extract LTO bytecode sections.  */
-static void
-process_obj_file (const char *obj_filename)
-{
-  const char *errmsg;
-  int err;
-  simple_object_read *sobj;
-  struct find_lto_sections_data data;
-
-  if (verbose)
-    fprintf (stderr, "Processing object file: %s\n", obj_filename);
-
-  int fd = open (obj_filename, O_RDONLY | O_BINARY);
-  if (fd == -1)
-    {
-      error ("cannot open %qs: %s", obj_filename, xstrerror (errno));
-      return;
-    }
-
-  sobj = simple_object_start_read (fd, 0, "__GNU_LTO", &errmsg, &err);
-  if (!sobj)
-    {
-      if (err == 0)
-	error ("%s: %s", obj_filename, errmsg);
-      else
-	error ("%s: %s: %s", obj_filename, errmsg, xstrerror (err));
-      close (fd);
-      return;
-    }
-
-  data.sobj = sobj;
-  data.obj_filename = obj_filename;
-  data.fd = fd;
-  data.section_count = 0;
-
-  errmsg = simple_object_find_sections (sobj, find_lto_sections_callback,
-					&data, &err);
-  if (errmsg)
-    {
-      if (err == 0)
-	error ("%s: %s", obj_filename, errmsg);
-      else
-	error ("%s: %s: %s", obj_filename, errmsg, xstrerror (err));
-      simple_object_release_read (sobj);
-      close (fd);
-      return;
-    }
-
-  if (verbose)
-    fprintf (stderr, "Found %u LTO sections in %s\n",
-	     data.section_count, obj_filename);
-
-  simple_object_release_read (sobj);
-  close (fd);
-}
-
+/* LTO bytecode extraction is handled by the driver when invoked with -xlto.
+   The driver reads LTO sections from input object files and invokes lto1
+   internally to generate MSL output.  */
 static void
 record_id (const char *p1, id_map ***where)
 {
@@ -623,16 +522,6 @@ main (int argc, char **argv)
   obstack_ptr_grow (&input_files_obstack, NULL);
   const char **input_files = XOBFINISH (&input_files_obstack, const char **);
 
-  /* Process all input object files to extract LTO sections.  */
-  for (const char **file = input_files; *file; file++)
-    {
-      if (verbose)
-	fprintf (stderr, "Input file: %s\n", *file);
-      process_obj_file (*file);
-    }
-
-  obstack_free (&input_files_obstack, NULL);
-
   if (!(fopenacc ^ fopenmp))
     fatal_error (input_location, "either %<-fopenacc%> or %<-fopenmp%> "
 		 "must be set");
@@ -663,9 +552,18 @@ main (int argc, char **argv)
     {
       if (!strcmp (argv[ix], "-o") && ix + 1 != argc)
 	outname = argv[++ix];
+      else if (argv[ix][0] != '-')
+	{
+	  /* Skip input files here - they will be added separately below.  */
+	  continue;
+	}
       else
 	obstack_ptr_grow (&argv_obstack, argv[ix]);
     }
+
+  /* Add input object files for LTO processing.  */
+  for (const char **file = input_files; *file; file++)
+    obstack_ptr_grow (&argv_obstack, *file);
 
   if (!dumppfx)
     dumppfx = outname;
@@ -749,6 +647,7 @@ main (int argc, char **argv)
 
   free_id_maps (func_ids);
   free_id_maps (var_ids);
+  obstack_free (&input_files_obstack, NULL);
 
   return 0;
 }
