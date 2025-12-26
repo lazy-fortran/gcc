@@ -119,6 +119,14 @@ lto_get_section_name (int section_type, const char *name,
 
       add = buffer;
       sep = "";
+
+#if OBJECT_FORMAT_MACHO
+      /* For Darwin/Mach-O offload sections, truncate function name
+	 to fit in 16 character section name limit.  */
+      if (section_name_prefix == OFFLOAD_SECTION_NAME_PREFIX
+	  && strlen (buffer) > 16)
+	buffer[16] = '\0';
+#endif
     }
   else if (section_type < LTO_N_SECTION_TYPES)
     {
@@ -146,6 +154,31 @@ lto_get_section_name (int section_type, const char *name,
     strcpy (post, "");
   else
     sprintf (post, "." HOST_WIDE_INT_PRINT_HEX_PURE, get_random_seed (false));
+
+#if OBJECT_FORMAT_MACHO
+  /* For Darwin/Mach-O offload sections, section names after the segment,
+     are limited to 16 characters.  Truncate the unique ID suffix to fit.
+     Format: sep (1) + add (varies) + post (up to 17 with dot+hex).
+     We truncate post to keep total <= 16.  */
+  if (section_name_prefix == OFFLOAD_SECTION_NAME_PREFIX)
+    {
+      size_t sep_len = strlen (sep);
+      size_t add_len = strlen (add);
+      size_t post_len = strlen (post);
+      size_t max_section_len = 16;
+
+      if (sep_len + add_len + post_len > max_section_len)
+	{
+	  /* Truncate post to fit.  Keep at least the dot if possible.  */
+	  size_t avail = max_section_len - sep_len - add_len;
+	  if (avail > 0)
+	    post[avail] = '\0';
+	  else
+	    post[0] = '\0';
+	}
+    }
+#endif
+
   char *res = concat (section_name_prefix, sep, add, post, NULL);
   if (buffer)
     free (buffer);

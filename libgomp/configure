@@ -667,6 +667,8 @@ LIBGOMP_BUILD_VERSIONED_SHLIB_FALSE
 LIBGOMP_BUILD_VERSIONED_SHLIB_TRUE
 OPT_LDFLAGS
 SECTION_LDFLAGS
+PLUGIN_METAL_FALSE
+PLUGIN_METAL_TRUE
 PLUGIN_GCN_FALSE
 PLUGIN_GCN_TRUE
 PLUGIN_NVPTX_FALSE
@@ -832,6 +834,7 @@ enable_tls
 enable_symvers
 enable_cet
 with_gcc_major_version_only
+enable_offload_targets
 '
       ac_precious_vars='build_alias
 host_alias
@@ -3449,6 +3452,11 @@ else
   multilib=yes
 fi
 
+
+# Check whether --enable-offload-targets was given.
+if test "${enable_offload_targets+set}" = set; then :
+  enableval=$enable_offload_targets;
+fi
 
 # We may get other options which we leave undocumented:
 # --with-target-subdir, --with-multisrctop, --with-multisubdir
@@ -15663,6 +15671,7 @@ done
 
 PLUGIN_NVPTX=0
 PLUGIN_GCN=0
+PLUGIN_METAL=0
 # Parse '--enable-offload-targets', figure out the corresponding libgomp
 # plugins, and configure to find the corresponding offload compilers.
 # 'offload_plugins' and 'offload_targets' will be populated in the same order.
@@ -15719,6 +15728,18 @@ if test x"$enable_offload_targets" != x; then
 	     ;;
 	esac
 	;;
+      metal*)
+	case "${target}" in
+	  *-*-darwin*)
+	    tgt_plugin=metal
+	    PLUGIN_METAL=1
+	    ;;
+	  *-*-*)
+	    # Metal only supported on macOS.
+	    PLUGIN_METAL=0
+	    ;;
+	esac
+	;;
       *)
 	as_fn_error $? "unknown offload target specified" "$LINENO" 5
 	;;
@@ -15763,6 +15784,14 @@ fi
 else
   PLUGIN_GCN_TRUE='#'
   PLUGIN_GCN_FALSE=
+fi
+
+ if test $PLUGIN_METAL = 1; then
+  PLUGIN_METAL_TRUE=
+  PLUGIN_METAL_FALSE='#'
+else
+  PLUGIN_METAL_TRUE='#'
+  PLUGIN_METAL_FALSE=
 fi
 
 
@@ -17629,6 +17658,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${PLUGIN_GCN_TRUE}" && test -z "${PLUGIN_GCN_FALSE}"; then
   as_fn_error $? "conditional \"PLUGIN_GCN\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${PLUGIN_METAL_TRUE}" && test -z "${PLUGIN_METAL_FALSE}"; then
+  as_fn_error $? "conditional \"PLUGIN_METAL\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${LIBGOMP_BUILD_VERSIONED_SHLIB_TRUE}" && test -z "${LIBGOMP_BUILD_VERSIONED_SHLIB_FALSE}"; then

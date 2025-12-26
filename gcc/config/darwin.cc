@@ -3588,13 +3588,19 @@ darwin_file_end (void)
 	  lto_asm_txt = buf = (char *) xmalloc (n + 1);
 	  while (fgets (lto_asm_txt, n, lto_asm_out_file))
 	    fputs (lto_asm_txt, asm_out_file);
-	  /* Put a termination label.  */
-	  fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
-		   LTO_SEGMENT_NAME, LTO_SECTS_SECTION);
-	  fprintf (asm_out_file, "L_GNU_LTO%d:\t;# end of lto\n",
-		   lto_section_num);
-	  /* Make sure our termination label stays in this section.  */
-	  fputs ("\t.space\t1\n", asm_out_file);
+	  /* Put a termination label only if we have wrapped sections.
+	     Without this check, we'd create __wrapper_sects without
+	     the companion __wrapper_names and __wrapper_index sections,
+	     causing "required section missing" errors.  */
+	  if (lto_section_names && lto_section_names->length ())
+	    {
+	      fprintf (asm_out_file, "\t.section %s,%s,regular,debug\n",
+		       LTO_SEGMENT_NAME, LTO_SECTS_SECTION);
+	      fprintf (asm_out_file, "L_GNU_LTO%d:\t;# end of lto\n",
+		       lto_section_num);
+	      /* Make sure our termination label stays in this section.  */
+	      fputs ("\t.space\t1\n", asm_out_file);
+	    }
 	}
 
       /* Remove the temporary file.  */

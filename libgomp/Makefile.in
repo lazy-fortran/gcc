@@ -120,6 +120,7 @@ host_triplet = @host@
 target_triplet = @target@
 @PLUGIN_NVPTX_TRUE@am__append_1 = libgomp-plugin-nvptx.la
 @PLUGIN_GCN_TRUE@am__append_2 = libgomp-plugin-gcn.la
+@PLUGIN_METAL_TRUE@am__append_4 = libgomp-plugin-metal.la
 @USE_FORTRAN_TRUE@am__append_3 = openacc.f90
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -213,6 +214,18 @@ libgomp_plugin_nvptx_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(libgomp_plugin_nvptx_la_LDFLAGS) $(LDFLAGS) -o $@
 @PLUGIN_NVPTX_TRUE@am_libgomp_plugin_nvptx_la_rpath = -rpath \
 @PLUGIN_NVPTX_TRUE@	$(toolexeclibdir)
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_DEPENDENCIES = libgomp.la \
+@PLUGIN_METAL_TRUE@	$(am__DEPENDENCIES_1)
+@PLUGIN_METAL_TRUE@am_libgomp_plugin_metal_la_OBJECTS =  \
+@PLUGIN_METAL_TRUE@	libgomp_plugin_metal_la-plugin-metal.lo
+libgomp_plugin_metal_la_OBJECTS =  \
+	$(am_libgomp_plugin_metal_la_OBJECTS)
+libgomp_plugin_metal_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(LIBTOOLFLAGS) \
+	--mode=link clang++ \
+	$(libgomp_plugin_metal_la_LDFLAGS) $(LDFLAGS) -o $@
+@PLUGIN_METAL_TRUE@am_libgomp_plugin_metal_la_rpath = -rpath \
+@PLUGIN_METAL_TRUE@	$(toolexeclibdir)
 @USE_FORTRAN_TRUE@am__objects_1 = openacc.lo
 am_libgomp_la_OBJECTS = alloc.lo atomic.lo barrier.lo critical.lo \
 	env.lo error.lo icv.lo icv-device.lo iter.lo iter_ull.lo \
@@ -528,7 +541,7 @@ libsubincludedir = $(libdir)/gcc/$(target_alias)/$(gcc_version)/include
 AM_CPPFLAGS = $(addprefix -I, $(search_path))
 AM_CFLAGS = $(XCFLAGS)
 AM_LDFLAGS = $(XLDFLAGS) $(SECTION_LDFLAGS) $(OPT_LDFLAGS)
-toolexeclib_LTLIBRARIES = libgomp.la $(am__append_1) $(am__append_2)
+toolexeclib_LTLIBRARIES = libgomp.la $(am__append_1) $(am__append_2) $(am__append_4)
 nodist_toolexeclib_HEADERS = libgomp.spec
 
 # -Wc is only a libtool option.
@@ -597,6 +610,18 @@ libgomp_la_SOURCES = alloc.c atomic.c barrier.c critical.c env.c \
 
 @PLUGIN_GCN_TRUE@libgomp_plugin_gcn_la_LIBADD = libgomp.la $(DL_LIBS)
 @PLUGIN_GCN_TRUE@libgomp_plugin_gcn_la_LIBTOOLFLAGS = --tag=disable-static
+
+# Apple Metal OpenACC plugin (macOS).
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_version_info = -version-info $(libtool_VERSION)
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_SOURCES = plugin/plugin-metal.cpp
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_CPPFLAGS = $(AM_CPPFLAGS) \
+@PLUGIN_METAL_TRUE@	-I$(srcdir)/plugin/metal-cpp
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_CXXFLAGS = $(AM_CXXFLAGS) -std=c++17
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_LDFLAGS = $(libgomp_plugin_metal_version_info) \
+@PLUGIN_METAL_TRUE@	$(lt_host_flags) -framework Metal -framework Foundation -framework CoreFoundation -framework MetalPerformanceShaders -lc++ -Wl,-undefined,dynamic_lookup
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_LIBADD = libgomp.la $(DL_LIBS)
+@PLUGIN_METAL_TRUE@libgomp_plugin_metal_la_LIBTOOLFLAGS = --tag=CXX
+
 nodist_noinst_HEADERS = libgomp_f.h
 nodist_libsubinclude_HEADERS = omp.h openacc.h acc_prof.h
 @USE_FORTRAN_TRUE@nodist_finclude_HEADERS = omp_lib.h omp_lib.f90 omp_lib.mod omp_lib_kinds.mod \
@@ -736,8 +761,11 @@ clean-toolexeclibLTLIBRARIES:
 libgomp-plugin-gcn.la: $(libgomp_plugin_gcn_la_OBJECTS) $(libgomp_plugin_gcn_la_DEPENDENCIES) $(EXTRA_libgomp_plugin_gcn_la_DEPENDENCIES) 
 	$(AM_V_CCLD)$(libgomp_plugin_gcn_la_LINK) $(am_libgomp_plugin_gcn_la_rpath) $(libgomp_plugin_gcn_la_OBJECTS) $(libgomp_plugin_gcn_la_LIBADD) $(LIBS)
 
-libgomp-plugin-nvptx.la: $(libgomp_plugin_nvptx_la_OBJECTS) $(libgomp_plugin_nvptx_la_DEPENDENCIES) $(EXTRA_libgomp_plugin_nvptx_la_DEPENDENCIES) 
+libgomp-plugin-nvptx.la: $(libgomp_plugin_nvptx_la_OBJECTS) $(libgomp_plugin_nvptx_la_DEPENDENCIES) $(EXTRA_libgomp_plugin_nvptx_la_DEPENDENCIES)
 	$(AM_V_CCLD)$(libgomp_plugin_nvptx_la_LINK) $(am_libgomp_plugin_nvptx_la_rpath) $(libgomp_plugin_nvptx_la_OBJECTS) $(libgomp_plugin_nvptx_la_LIBADD) $(LIBS)
+
+libgomp-plugin-metal.la: $(libgomp_plugin_metal_la_OBJECTS) $(libgomp_plugin_metal_la_DEPENDENCIES) $(EXTRA_libgomp_plugin_metal_la_DEPENDENCIES)
+	$(libgomp_plugin_metal_la_LINK) $(am_libgomp_plugin_metal_la_rpath) $(libgomp_plugin_metal_la_OBJECTS) $(libgomp_plugin_metal_la_LIBADD) $(LIBS)
 
 libgomp.la: $(libgomp_la_OBJECTS) $(libgomp_la_DEPENDENCIES) $(EXTRA_libgomp_la_DEPENDENCIES) 
 	$(AM_V_GEN)$(libgomp_la_LINK) -rpath $(toolexeclibdir) $(libgomp_la_OBJECTS) $(libgomp_la_LIBADD) $(LIBS)
@@ -849,6 +877,22 @@ libgomp_plugin_nvptx_la-plugin-nvptx.lo: plugin/plugin-nvptx.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='plugin/plugin-nvptx.c' object='libgomp_plugin_nvptx_la-plugin-nvptx.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(libgomp_plugin_nvptx_la_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libgomp_plugin_nvptx_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libgomp_plugin_nvptx_la-plugin-nvptx.lo `test -f 'plugin/plugin-nvptx.c' || echo '$(srcdir)/'`plugin/plugin-nvptx.c
+
+libgomp_plugin_metal_la-plugin-metal.lo: plugin/plugin-metal.cpp
+	@echo "Compiling Metal plugin with clang++..."
+	@mkdir -p .libs
+	clang++ $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libgomp_plugin_metal_la_CPPFLAGS) $(CPPFLAGS) $(libgomp_plugin_metal_la_CXXFLAGS) $(CXXFLAGS) -fPIC -c -o .libs/libgomp_plugin_metal_la-plugin-metal.o `test -f 'plugin/plugin-metal.cpp' || echo '$(srcdir)/'`plugin/plugin-metal.cpp
+	@echo "# libgomp_plugin_metal_la-plugin-metal.lo - a libtool object file" > libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "# Generated by libtool (GNU libtool 1.3134 2009-11-29) 2.2.7a" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "#" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "# Please DO NOT delete this file!" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "# It is necessary for linking the library." >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "# Name of the PIC object." >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "pic_object='.libs/libgomp_plugin_metal_la-plugin-metal.o'" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "# Name of the non-PIC object" >> libgomp_plugin_metal_la-plugin-metal.lo
+	@echo "non_pic_object=none" >> libgomp_plugin_metal_la-plugin-metal.lo
 
 .f90.o:
 	$(AM_V_FC)$(FCCOMPILE) -c -o $@ $<
