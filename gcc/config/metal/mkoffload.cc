@@ -160,6 +160,9 @@ record_id (const char *p1, id_map ***where)
   *where = &v->next;
 }
 
+/* Forward declaration.  */
+static void compile_metal (const char *, const char *);
+
 /* Read the whole input file.  It will be NUL terminated.  */
 
 static const char *
@@ -272,7 +275,7 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 
   /* Embed the metallib binary using #embed directive.  */
   fprintf (out, "static const unsigned char metal_code[] = {\n"
-	   "#embed \"%s\"\n"
+	   "#embed \"%s\" if_empty (error_metallib_is_empty)\n"
 	   "};\n\n", metallib_name);
 
   /* Create metal_obj array pointing to the embedded binary.  */
@@ -285,28 +288,34 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 
   /* Dump out variable idents.  */
   fprintf (out, "static const char *const var_mappings[] = {");
-  for (comma = "", id = var_ids; id; comma = ",", id = id->next)
-    fprintf (out, "%s\n\t\"%s\"", comma, id->msl_name);
+  if (!var_ids)
+    fprintf (out, "\n\tNULL");
+  else
+    for (comma = "", id = var_ids; id; comma = ",", id = id->next)
+      fprintf (out, "%s\n\t\"%s\"", comma, id->msl_name);
   fprintf (out, "\n};\n\n");
 
   /* Dump out function idents.  */
-  fprintf (out, "static const struct metal_fn {\n"
-	   "  const char *name;\n"
+  fprintf (out, "static const struct metal_fn_launch {\n"
+	   "  const char *fn;\n"
 	   "  unsigned short dim[%d];\n"
 	   "} func_mappings[] = {\n", GOMP_DIM_MAX);
-  for (comma = "", id = func_ids; id; comma = ",", id = id->next)
-    fprintf (out, "%s\n\t{\"%s\"%s}", comma, id->msl_name,
-	     id->dim ? id->dim : "");
+  if (!func_ids)
+    fprintf (out, "\n\t{NULL, {0, 0, 0}}");
+  else
+    for (comma = "", id = func_ids; id; comma = ",", id = id->next)
+      fprintf (out, "%s\n\t{\"%s\"%s}", comma, id->msl_name,
+	       id->dim ? id->dim : ", {0, 0, 0}");
   fprintf (out, "\n};\n\n");
 
   fprintf (out,
-	   "static const struct metal_data {\n"
+	   "static const struct metal_tdata {\n"
 	   "  uintptr_t omp_requires_mask;\n"
 	   "  const struct metal_obj *metal_objs;\n"
 	   "  unsigned metal_num;\n"
 	   "  const char *const *var_names;\n"
 	   "  unsigned var_num;\n"
-	   "  const struct metal_fn *fn_descs;\n"
+	   "  const struct metal_fn_launch *fn_descs;\n"
 	   "  unsigned fn_num;\n"
 	   "  unsigned ind_fn_num;\n"
 	   "} metal_data = {\n"
