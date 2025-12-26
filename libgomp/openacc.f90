@@ -360,7 +360,7 @@ module openacc_internal
 
     function acc_is_present_array_h (a)
       logical acc_is_present_array_h
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end function
 
     subroutine acc_copyin_async_32_h (a, len, async)
@@ -1415,7 +1415,7 @@ end function
 function acc_is_present_array_h (a)
   use openacc_internal, only: acc_is_present_l
   logical acc_is_present_array_h
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   acc_is_present_array_h = acc_is_present_l (a, sizeof (a)) /= 0
 end function
 
