@@ -514,6 +514,55 @@ msl_is_reg_decl (const char *line)
     && strchr (t, '=') == NULL;
 }
 
+static bool
+msl_parse_align_comment (const char *line, unsigned *align)
+{
+  const char *t = msl_ltrim (line);
+  if (!startswith (t, COMMENT_PREFIX " .align "))
+    return false;
+  t += strlen (COMMENT_PREFIX " .align ");
+  char *end = NULL;
+  unsigned long v = strtoul (t, &end, 10);
+  if (!end || end == t)
+    return false;
+  *align = (unsigned) v;
+  return true;
+}
+
+static bool
+msl_parse_constpool_label (const char *line, const char **out_name)
+{
+  const char *t = msl_ltrim (line);
+  if (!startswith (t, "LC"))
+    return false;
+  t += 2;
+  if (*t < '0' || *t > '9')
+    return false;
+  while (*t >= '0' && *t <= '9')
+    t++;
+  if (*t != ':' || t[1] != '\0')
+    return false;
+  *out_name = msl_ltrim (line);
+  return true;
+}
+
+static bool
+msl_parse_dot_long (const char *line, long *out_val)
+{
+  const char *t = msl_ltrim (line);
+  if (!startswith (t, ".long"))
+    return false;
+  t += strlen (".long");
+  while (*t == ' ' || *t == '\t')
+    t++;
+  char *end = NULL;
+  long v = strtol (t, &end, 0);
+  if (!end || end == t)
+    return false;
+  *out_val = v;
+  return true;
+}
+
 static void
 rewrite_msl_control_flow (const char *msl_file)
 {
@@ -545,13 +594,132 @@ rewrite_msl_control_flow (const char *msl_file)
   struct obstack out_obstack;
   obstack_init (&out_obstack);
 
-  auto append_line = [&out_obstack] (const char *s) {
+  char **constpool_labels = NULL;
+  size_t constpool_n = 0, constpool_cap = 0;
+
+  auto remember_constpool_label = [&] (const char *label_line) {
+    const char *t = msl_ltrim (label_line);
+    size_t n = strlen (t);
+    gcc_assert (n > 0 && t[n - 1] == ':');
+    char *name = XNEWVEC (char, n);
+    memcpy (name, t, n - 1);
+    name[n - 1] = '\0';
+    if (constpool_n == constpool_cap)
+      {
+	constpool_cap = constpool_cap ? constpool_cap * 2 : 16;
+	constpool_labels = XRESIZEVEC (char *, constpool_labels,
+				       constpool_cap);
+      }
+    constpool_labels[constpool_n++] = name;
+  };
+
+  auto line_needs_const_cast_rewrite = [&] (const char *s) -> bool {
+    if (constpool_n == 0)
+      return false;
+    if (strstr (s, "(device ") == NULL)
+      return false;
+    for (size_t li = 0; li < constpool_n; li++)
+      {
+	const char *lab = constpool_labels[li];
+	char needle[64];
+	snprintf (needle, sizeof needle, "*)%s", lab);
+	if (strstr (s, needle) != NULL)
+	  return true;
+      }
+    return false;
+  };
+
+  auto append_line = [&] (const char *s) {
+    if (line_needs_const_cast_rewrite (s))
+      {
+	/* Rewrite device casts for constant-pool label references to use
+	   constant address space.  */
+	const char *p = s;
+	while (*p)
+	  {
+	    const char *hit = strstr (p, "(device ");
+	    if (!hit)
+	      {
+		obstack_grow (&out_obstack, p, strlen (p));
+		break;
+	      }
+	    obstack_grow (&out_obstack, p, hit - p);
+	    obstack_grow (&out_obstack, "(constant ", strlen ("(constant "));
+	    p = hit + strlen ("(device ");
+	  }
+	obstack_1grow (&out_obstack, '\n');
+	return;
+      }
+
     obstack_grow (&out_obstack, s, strlen (s));
     obstack_1grow (&out_obstack, '\n');
   };
 
   for (size_t i = 0; i < nlines; )
     {
+      /* Rewrite simple constant-pool blocks emitted as pseudo-asm into valid
+	 MSL declarations.  */
+      {
+	size_t label_line = i;
+	unsigned align = 0;
+	bool has_align = msl_parse_align_comment (lines[i], &align);
+	if (has_align)
+	  label_line = i + 1;
+	if (label_line < nlines)
+	  {
+	    const char *lab_line = lines[label_line];
+	    const char *lab_raw = NULL;
+	    if (msl_parse_constpool_label (lab_line, &lab_raw))
+	      {
+		size_t k = label_line + 1;
+		long vals[64];
+		size_t nvals = 0;
+		long v;
+		while (k < nlines && msl_parse_dot_long (lines[k], &v))
+		  {
+		    if (nvals < ARRAY_SIZE (vals))
+		      vals[nvals++] = v;
+		    k++;
+		  }
+		if (nvals)
+		  {
+		    changed = true;
+		    remember_constpool_label (lab_line);
+		    const char *name = msl_ltrim (lab_line);
+		    size_t n = strlen (name);
+		    gcc_assert (n > 0 && name[n - 1] == ':');
+
+		    if (has_align)
+		      {
+			char hdr[128];
+			snprintf (hdr, sizeof hdr,
+				  "alignas(%u) constant uint ", align);
+			obstack_grow (&out_obstack, hdr, strlen (hdr));
+		      }
+		    else
+		      obstack_grow (&out_obstack, "constant uint ",
+				    strlen ("constant uint "));
+
+		    obstack_grow (&out_obstack, name, n - 1);
+		    obstack_grow (&out_obstack, "[] = { ",
+				  strlen ("[] = { "));
+		    for (size_t vi = 0; vi < nvals; vi++)
+		      {
+			char num[64];
+			snprintf (num, sizeof num, "%s(uint) %ld",
+				  vi ? ", " : "", vals[vi]);
+			obstack_grow (&out_obstack, num, strlen (num));
+		      }
+		    obstack_grow (&out_obstack, " };", strlen (" };"));
+		    obstack_1grow (&out_obstack, '\n');
+
+		    i = k;
+		    continue;
+		  }
+	      }
+	  }
+      }
+
       /* Function signature followed by an opening brace.  Signatures may span
 	 multiple lines (kernel parameter lists).  */
       if (strstr (lines[i], "void ") != NULL)
@@ -762,6 +930,9 @@ rewrite_msl_control_flow (const char *msl_file)
     }
 
   obstack_free (&out_obstack, NULL);
+  for (size_t i = 0; i < constpool_n; i++)
+    free (constpool_labels[i]);
+  free (constpool_labels);
   free (lines);
   free (input);
 }
@@ -785,6 +956,11 @@ compile_metal (const char *msl_file, const char *metallib_file)
   obstack_ptr_grow (&argv_obstack, "macosx");
   obstack_ptr_grow (&argv_obstack, "metal");
   obstack_ptr_grow (&argv_obstack, "-c");
+  /* The current generated MSL is very low-level and may trigger a lot of
+     diagnostics (e.g. unused registers).  Keep the noise down so tool output
+     stays manageable.  */
+  obstack_ptr_grow (&argv_obstack, "-Wno-unused-variable");
+  obstack_ptr_grow (&argv_obstack, "-Wno-uninitialized");
   obstack_ptr_grow (&argv_obstack, msl_file);
   obstack_ptr_grow (&argv_obstack, "-o");
   obstack_ptr_grow (&argv_obstack, air_name);

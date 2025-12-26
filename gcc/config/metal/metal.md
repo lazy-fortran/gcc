@@ -36,7 +36,7 @@
 ;; Predicates
 
 (define_predicate "metal_register_operand"
-  (match_code "reg")
+  (match_code "reg,subreg")
 {
   return register_operand (op, mode);
 })
@@ -82,6 +82,54 @@
   (const_string "unknown"))
 
 ;; Move patterns
+
+(define_expand "movqi"
+  [(set (match_operand:QI 0 "nonimmediate_operand")
+	(match_operand:QI 1 "general_operand"))]
+  ""
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (QImode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
+
+(define_insn "*movqi_insn"
+  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,m")
+	(match_operand:QI 1 "general_operand" "i,m,r"))]
+  "!MEM_P (operands[0]) || register_operand (operands[1], QImode)"
+	  "@
+	   %0 = %1;
+	   %0 = *(device char*)%1;
+	   /* */*(device char*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
+
+(define_expand "movhi"
+  [(set (match_operand:HI 0 "nonimmediate_operand")
+	(match_operand:HI 1 "general_operand"))]
+  ""
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (HImode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
+
+(define_insn "*movhi_insn"
+  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,m")
+	(match_operand:HI 1 "general_operand" "i,m,r"))]
+  "!MEM_P (operands[0]) || register_operand (operands[1], HImode)"
+	  "@
+	   %0 = %1;
+	   %0 = *(device short*)%1;
+	   /* */*(device short*)%0 = %1;"
+	  [(set_attr "type" "move,load,store")])
 
 (define_expand "movsi"
   [(set (match_operand:SI 0 "nonimmediate_operand")
