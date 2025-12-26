@@ -116,6 +116,7 @@ struct metal_device
 
   /* Buffer allocation tracking with dynamic hash table.  */
   std::unordered_map<void*, MTL::Buffer*> *buffers;
+  pthread_mutex_t buffer_lock;		/* Protects buffers table.  */
 
   /* Loaded images tracking.  */
   struct metal_image_data *images;	/* Linked list of loaded images.  */
@@ -191,6 +192,8 @@ metal_enumerate_devices (void)
       metal_devices[num_metal_devices].initialized = false;
       metal_devices[num_metal_devices].buffers
 	= new std::unordered_map<void*, MTL::Buffer*>();
+      pthread_mutex_init (&metal_devices[num_metal_devices].buffer_lock,
+			  nullptr);
       metal_devices[num_metal_devices].images = nullptr;
       pthread_mutex_init (&metal_devices[num_metal_devices].image_lock,
 			  nullptr);
@@ -213,7 +216,7 @@ metal_enumerate_devices (void)
 }
 
 /* Add a buffer to the device's tracking table.  Returns true on success.
-   Caller must hold metal_lock.  */
+   Caller must hold metal_devices[ord].buffer_lock.  */
 static bool
 metal_add_buffer (int ord, void *ptr, MTL::Buffer *buffer)
 {
@@ -224,7 +227,7 @@ metal_add_buffer (int ord, void *ptr, MTL::Buffer *buffer)
 
 /* Find and remove a buffer from the device's tracking table.
    Returns the MTL::Buffer if found, nullptr otherwise.
-   Caller must hold metal_lock.  */
+   Caller must hold metal_devices[ord].buffer_lock.  */
 static MTL::Buffer *
 metal_remove_buffer (int ord, void *ptr)
 {
@@ -241,7 +244,7 @@ metal_remove_buffer (int ord, void *ptr)
 
 /* Find a buffer that contains the given pointer within its bounds.
    Returns the MTL::Buffer if found, nullptr otherwise.
-   Caller must hold metal_lock.  */
+   Caller must hold metal_devices[ord].buffer_lock.  */
 static MTL::Buffer *
 metal_find_buffer (int ord, const void *ptr)
 {
@@ -260,7 +263,7 @@ metal_find_buffer (int ord, const void *ptr)
 
 /* Validate that a device pointer with the given size fits within a registered
    Metal buffer.  Returns true if valid, false with error message if not.
-   Caller must hold metal_lock.  */
+   Caller must hold metal_devices[ord].buffer_lock.  */
 static bool
 metal_validate_device_ptr (int ord, const void *ptr, size_t n,
 			   const char *direction)
@@ -401,6 +404,7 @@ GOMP_OFFLOAD_fini_device (int ord)
   pthread_mutex_unlock (&metal_devices[ord].image_lock);
 
   /* Release all remaining buffers for this device.  */
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
   if (metal_devices[ord].buffers)
     {
       for (auto &entry : *metal_devices[ord].buffers)
@@ -411,6 +415,7 @@ GOMP_OFFLOAD_fini_device (int ord)
       delete metal_devices[ord].buffers;
       metal_devices[ord].buffers = nullptr;
     }
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   if (metal_devices[ord].queue)
     {
@@ -425,6 +430,7 @@ GOMP_OFFLOAD_fini_device (int ord)
     }
 
   pthread_mutex_destroy (&metal_devices[ord].image_lock);
+  pthread_mutex_destroy (&metal_devices[ord].buffer_lock);
   metal_devices[ord].initialized = false;
   pthread_mutex_unlock (&metal_lock);
 
@@ -729,46 +735,34 @@ GOMP_OFFLOAD_alloc (int ord, size_t size)
     return nullptr;
 
   pthread_mutex_lock (&metal_lock);
-
-  if (!metal_devices[ord].initialized)
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return nullptr;
-    }
-
+  bool initialized = metal_devices[ord].initialized;
   MTL::Device *device = metal_devices[ord].device;
-  if (!device)
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return nullptr;
-    }
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized || !device)
+    return nullptr;
 
   /* Use shared storage mode for unified memory on Apple Silicon.
      This means both CPU and GPU can access the same memory directly.  */
   MTL::Buffer *buffer = device->newBuffer (size,
 					   MTL::ResourceStorageModeShared);
   if (!buffer)
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return nullptr;
-    }
+    return nullptr;
 
   void *ptr = buffer->contents ();
   if (!ptr)
     {
-      pthread_mutex_unlock (&metal_lock);
       buffer->release ();
       return nullptr;
     }
 
-  if (!metal_add_buffer (ord, ptr, buffer))
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  if (!metal_devices[ord].buffers || !metal_add_buffer (ord, ptr, buffer))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       buffer->release ();
       return nullptr;
     }
-
-  pthread_mutex_unlock (&metal_lock);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   return ptr;
 }
 
@@ -782,9 +776,10 @@ GOMP_OFFLOAD_free (int ord, void *ptr)
   if (!ptr)
     return true;  /* Freeing nullptr is a no-op.  */
 
-  pthread_mutex_lock (&metal_lock);
-  MTL::Buffer *buffer = metal_remove_buffer (ord, ptr);
-  pthread_mutex_unlock (&metal_lock);
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  MTL::Buffer *buffer = metal_devices[ord].buffers
+    ? metal_remove_buffer (ord, ptr) : nullptr;
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   if (!buffer)
     return false;  /* Buffer not found in tracking table.  */
@@ -830,25 +825,24 @@ GOMP_OFFLOAD_dev2host (int ord, void *dst, const void *src, size_t n)
     return true;
 
   pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[ord].initialized)
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
   /* Validate source is within a registered Metal buffer.  */
-  if (!metal_validate_device_ptr (ord, src, n, "dev2host"))
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return false;
-    }
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, src, n, "dev2host");
+  if (ok)
+    std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* With shared storage mode on Apple Silicon, device memory is directly
      accessible from CPU.  Hold lock during copy to prevent concurrent free.  */
-  std::memcpy (dst, src, n);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  return ok;
 }
 
 bool
@@ -872,25 +866,24 @@ GOMP_OFFLOAD_host2dev (int ord, void *dst, const void *src, size_t n)
     return true;
 
   pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[ord].initialized)
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
   /* Validate destination is within a registered Metal buffer.  */
-  if (!metal_validate_device_ptr (ord, dst, n, "host2dev"))
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return false;
-    }
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, dst, n, "host2dev");
+  if (ok)
+    std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* With shared storage mode on Apple Silicon, device memory is directly
      accessible from CPU.  Hold lock during copy to prevent concurrent free.  */
-  std::memcpy (dst, src, n);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  return ok;
 }
 
 bool
@@ -914,30 +907,26 @@ GOMP_OFFLOAD_dev2dev (int ord, void *dst, const void *src, size_t n)
     return true;
 
   pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[ord].initialized)
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
   /* Validate both source and destination are within registered Metal buffers.  */
-  if (!metal_validate_device_ptr (ord, src, n, "dev2dev source"))
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return false;
-    }
-  if (!metal_validate_device_ptr (ord, dst, n, "dev2dev destination"))
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return false;
-    }
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, src, n, "dev2dev source");
+  if (ok)
+    ok = metal_validate_device_ptr (ord, dst, n, "dev2dev destination");
+  if (ok)
+    std::memmove (dst, src, n);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* Use memmove for device-to-device copies to handle overlapping regions
      safely.  Hold lock during copy to prevent concurrent free.  */
-  std::memmove (dst, src, n);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  return ok;
 }
 
 bool
@@ -960,24 +949,23 @@ GOMP_OFFLOAD_memset (int ord, void *ptr, int val, size_t count)
     return true;
 
   pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[ord].initialized)
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
-  if (!metal_validate_device_ptr (ord, ptr, count, "memset"))
-    {
-      pthread_mutex_unlock (&metal_lock);
-      return false;
-    }
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, ptr, count, "memset");
+  if (ok)
+    std::memset (ptr, val, count);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* With shared storage mode, device memory is directly accessible.
      Hold lock during memset to prevent concurrent free.  */
-  std::memset (ptr, val, count);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  return ok;
 }
 
 /* Strided 2D memory copy.  With Metal's shared storage mode, both host and
@@ -1028,12 +1016,15 @@ GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
     return 1;
 
   pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[ord].initialized)
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_error ("memcpy2d: device %d not initialized", ord);
       return 0;
     }
+
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
 
   /* Validate that the last row offset does not overflow.  */
   size_t dst_last_row, src_last_row, dst_row_off, src_row_off;
@@ -1042,7 +1033,7 @@ GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
       || __builtin_add_overflow (dst_row_off, dst_offset1_size, &dst_row_off)
       || __builtin_add_overflow (dst_row_off, dim1_size, &dst_row_off))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       GOMP_PLUGIN_error ("memcpy2d: destination address overflow");
       return 0;
     }
@@ -1051,7 +1042,7 @@ GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
       || __builtin_add_overflow (src_row_off, src_offset1_size, &src_row_off)
       || __builtin_add_overflow (src_row_off, dim1_size, &src_row_off))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       GOMP_PLUGIN_error ("memcpy2d: source address overflow");
       return 0;
     }
@@ -1070,7 +1061,7 @@ GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
       std::memcpy (dst_row, src_row, dim1_size);
     }
 
-  pthread_mutex_unlock (&metal_lock);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   return 1;
 }
 
@@ -1130,24 +1121,27 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
     return 1;
 
   pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[ord].initialized)
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
       GOMP_PLUGIN_error ("memcpy3d: device %d not initialized", ord);
       return 0;
     }
+
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
 
   /* Calculate slice sizes with overflow check.  */
   size_t dst_slice_size, src_slice_size;
   if (__builtin_mul_overflow (dst_dim2_size, dst_dim1_len, &dst_slice_size))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       GOMP_PLUGIN_error ("memcpy3d: destination slice size overflow");
       return 0;
     }
   if (__builtin_mul_overflow (src_dim2_size, src_dim1_len, &src_slice_size))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       GOMP_PLUGIN_error ("memcpy3d: source slice size overflow");
       return 0;
     }
@@ -1162,7 +1156,7 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
       || __builtin_add_overflow (dst_off, dst_offset2_size, &dst_off)
       || __builtin_add_overflow (dst_off, dim2_size, &dst_off))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       GOMP_PLUGIN_error ("memcpy3d: destination address overflow");
       return 0;
     }
@@ -1176,7 +1170,7 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
       || __builtin_add_overflow (src_off, src_offset2_size, &src_off)
       || __builtin_add_overflow (src_off, dim2_size, &src_off))
     {
-      pthread_mutex_unlock (&metal_lock);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       GOMP_PLUGIN_error ("memcpy3d: source address overflow");
       return 0;
     }
@@ -1202,7 +1196,7 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
 	}
     }
 
-  pthread_mutex_unlock (&metal_lock);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   return 1;
 }
 
@@ -1229,7 +1223,10 @@ metal_bind_kernel_arguments (MTL::ComputeCommandEncoder *enc, int ord,
     return;
 
   /* Find the Metal buffer containing dp.  */
-  MTL::Buffer *args_buffer = metal_find_buffer (ord, dp);
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  MTL::Buffer *args_buffer = metal_devices[ord].buffers
+    ? metal_find_buffer (ord, dp) : nullptr;
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   if (!args_buffer)
     {
       enc->endEncoding ();
@@ -1277,20 +1274,23 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
   if (ord < 0 || ord >= num_metal_devices)
     GOMP_PLUGIN_fatal ("invalid device ordinal %d", ord);
 
-  pthread_mutex_lock (&metal_lock);
-
-  if (!metal_devices[ord].initialized)
-    {
-      pthread_mutex_unlock (&metal_lock);
-      GOMP_PLUGIN_fatal ("device %d not initialized", ord);
-    }
-
-  MTL::CommandQueue *exec_queue = queue ? queue : metal_devices[ord].queue;
-
+  bool release_exec_queue = false;
+  MTL::CommandQueue *exec_queue = queue;
   if (!exec_queue)
     {
+      pthread_mutex_lock (&metal_lock);
+      bool initialized = metal_devices[ord].initialized;
+      exec_queue = metal_devices[ord].queue;
+      if (exec_queue)
+	exec_queue->retain ();
       pthread_mutex_unlock (&metal_lock);
-      GOMP_PLUGIN_fatal ("no command queue available for kernel execution");
+
+      if (!initialized)
+	GOMP_PLUGIN_fatal ("device %d not initialized", ord);
+      if (!exec_queue)
+	GOMP_PLUGIN_fatal ("no command queue available for kernel execution");
+
+      release_exec_queue = true;
     }
 
   /* Compute launch dimensions.  */
@@ -1304,7 +1304,8 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
 
   if (threads_per_threadgroup > max_threads)
     {
-      pthread_mutex_unlock (&metal_lock);
+      if (release_exec_queue)
+	exec_queue->release ();
       GOMP_PLUGIN_fatal ("Metal kernel execution: num_workers (%u) * "
 			 "vector_length (%u) = %u exceeds "
 			 "maxTotalThreadsPerThreadgroup (%lu)",
@@ -1316,7 +1317,8 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
   MTL::CommandBuffer *cmd = exec_queue->commandBuffer ();
   if (!cmd)
     {
-      pthread_mutex_unlock (&metal_lock);
+      if (release_exec_queue)
+	exec_queue->release ();
       GOMP_PLUGIN_fatal ("failed to create command buffer");
     }
 
@@ -1325,7 +1327,8 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
   if (!enc)
     {
       cmd->release ();
-      pthread_mutex_unlock (&metal_lock);
+      if (release_exec_queue)
+	exec_queue->release ();
       GOMP_PLUGIN_fatal ("failed to create compute command encoder");
     }
 
@@ -1361,14 +1364,16 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
 	  const char *error_msg = error
 	      ? error->localizedDescription ()->utf8String ()
 	      : "unknown error";
-	  pthread_mutex_unlock (&metal_lock);
+	  if (release_exec_queue)
+	    exec_queue->release ();
 	  GOMP_PLUGIN_fatal ("Metal kernel execution failed: %s", error_msg);
 	}
 
       cmd->release ();
     }
 
-  pthread_mutex_unlock (&metal_lock);
+  if (release_exec_queue)
+    exec_queue->release ();
 }
 
 void
@@ -1427,16 +1432,6 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
   if (aq->device_ord < 0 || aq->device_ord >= num_metal_devices)
     GOMP_PLUGIN_fatal ("openacc_async_exec: invalid device ordinal %d",
 		       aq->device_ord);
-
-  /* Verify device is initialized before attempting dispatch.  */
-  pthread_mutex_lock (&metal_lock);
-  if (!metal_devices[aq->device_ord].initialized)
-    {
-      pthread_mutex_unlock (&metal_lock);
-      GOMP_PLUGIN_fatal ("openacc_async_exec: device %d not initialized",
-			 aq->device_ord);
-    }
-  pthread_mutex_unlock (&metal_lock);
 
   struct metal_fn_descriptor *fn_desc = (struct metal_fn_descriptor *) fn;
 
@@ -1760,17 +1755,22 @@ GOMP_OFFLOAD_openacc_async_host2dev (int ord, void *dst, const void *src,
   if (n == 0)
     return true;
 
-  /* Validate destination and perform copy under lock to prevent concurrent free.  */
   pthread_mutex_lock (&metal_lock);
-  if (!metal_validate_device_ptr (ord, dst, n, "async_host2dev"))
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
-  std::memcpy (dst, src, n);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  /* Validate destination and perform copy under lock to prevent concurrent free.  */
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, dst, n, "async_host2dev");
+  if (ok)
+    std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+  return ok;
 }
 
 bool
@@ -1796,17 +1796,22 @@ GOMP_OFFLOAD_openacc_async_dev2host (int ord, void *dst, const void *src,
   if (n == 0)
     return true;
 
-  /* Validate source and perform copy under lock to prevent concurrent free.  */
   pthread_mutex_lock (&metal_lock);
-  if (!metal_validate_device_ptr (ord, src, n, "async_dev2host"))
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
-  std::memcpy (dst, src, n);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  /* Validate source and perform copy under lock to prevent concurrent free.  */
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, src, n, "async_dev2host");
+  if (ok)
+    std::memcpy (dst, src, n);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+  return ok;
 }
 
 bool
@@ -1832,22 +1837,24 @@ GOMP_OFFLOAD_openacc_async_dev2dev (int ord, void *dst, const void *src,
   if (n == 0)
     return true;
 
-  /* Validate both pointers and perform copy under lock to prevent concurrent free.  */
   pthread_mutex_lock (&metal_lock);
-  if (!metal_validate_device_ptr (ord, src, n, "async_dev2dev source"))
+  bool initialized = metal_devices[ord].initialized;
+  pthread_mutex_unlock (&metal_lock);
+  if (!initialized)
     {
-      pthread_mutex_unlock (&metal_lock);
-      return false;
-    }
-  if (!metal_validate_device_ptr (ord, dst, n, "async_dev2dev destination"))
-    {
-      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_error ("device %d not initialized", ord);
       return false;
     }
 
-  std::memmove (dst, src, n);
-  pthread_mutex_unlock (&metal_lock);
-  return true;
+  /* Validate both pointers and perform copy under lock to prevent concurrent free.  */
+  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+  bool ok = metal_validate_device_ptr (ord, src, n, "async_dev2dev source");
+  if (ok)
+    ok = metal_validate_device_ptr (ord, dst, n, "async_dev2dev destination");
+  if (ok)
+    std::memmove (dst, src, n);
+  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+  return ok;
 }
 
 union goacc_property_value
