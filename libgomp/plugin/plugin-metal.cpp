@@ -1200,7 +1200,11 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
   return 1;
 }
 
-/* Compute Metal launch dimensions from OpenACC dimensions.  */
+/* Compute Metal launch dimensions from OpenACC dimensions.
+   Default values are chosen to match common GPU architectures:
+   - gangs: 1 (minimal parallelism, user should specify)
+   - workers: 1 (minimal Y-dimension parallelism)
+   - vectors: 32 (typical SIMD width for Apple GPUs)  */
 static void
 metal_compute_launch_dims (unsigned *dims, unsigned *gangs,
 			   unsigned *workers, unsigned *vectors)
@@ -1286,6 +1290,21 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
   /* Compute launch dimensions.  */
   unsigned gangs, workers, vectors;
   metal_compute_launch_dims (dims, &gangs, &workers, &vectors);
+
+  /* Validate threadgroup size against hardware limits.
+     Metal requires workers * vectors <= maxTotalThreadsPerThreadgroup.  */
+  unsigned threads_per_threadgroup = workers * vectors;
+  NS::UInteger max_threads = fn_desc->pipeline->maxTotalThreadsPerThreadgroup ();
+
+  if (threads_per_threadgroup > max_threads)
+    {
+      pthread_mutex_unlock (&metal_lock);
+      GOMP_PLUGIN_fatal ("Metal kernel execution: num_workers (%u) * "
+			 "vector_length (%u) = %u exceeds "
+			 "maxTotalThreadsPerThreadgroup (%lu)",
+			 workers, vectors, threads_per_threadgroup,
+			 (unsigned long) max_threads);
+    }
 
   /* Create command buffer for kernel execution.  */
   MTL::CommandBuffer *cmd = exec_queue->commandBuffer ();
@@ -1379,17 +1398,10 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *),
   /* devaddrs points to device memory containing kernel arguments.  */
   void *dp = devaddrs ? *devaddrs : nullptr;
 
-  /* Validate dimensions for overflow.  */
-  unsigned workers = dims[GOMP_DIM_WORKER] ? dims[GOMP_DIM_WORKER] : 1;
-  unsigned vectors = dims[GOMP_DIM_VECTOR] ? dims[GOMP_DIM_VECTOR] : 32;
-  unsigned threads_per_threadgroup;
-  if (__builtin_mul_overflow (workers, vectors, &threads_per_threadgroup))
-    GOMP_PLUGIN_fatal ("openacc_exec: num_workers (%u) * vector_length (%u) "
-		       "causes integer overflow", workers, vectors);
-
   /* Execute kernel synchronously on default queue.
      Note: We don't have a device ordinal here, so we assume device 0.
-     This matches NVPTX behavior which uses the current device.  */
+     This matches NVPTX behavior which uses the current device.
+     Hardware limit validation is performed inside metal_exec().  */
   metal_exec (0, fn_desc, dp, dims, nullptr, nullptr, nullptr);
 }
 
@@ -1425,16 +1437,9 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
   /* devaddrs points to device memory containing kernel arguments.  */
   void *dp = devaddrs ? *devaddrs : nullptr;
 
-  /* Validate dimensions for overflow.  */
-  unsigned workers = dims[GOMP_DIM_WORKER] ? dims[GOMP_DIM_WORKER] : 1;
-  unsigned vectors = dims[GOMP_DIM_VECTOR] ? dims[GOMP_DIM_VECTOR] : 32;
-  unsigned threads_per_threadgroup;
-  if (__builtin_mul_overflow (workers, vectors, &threads_per_threadgroup))
-    GOMP_PLUGIN_fatal ("openacc_async_exec: num_workers (%u) * vector_length (%u) "
-		       "causes integer overflow", workers, vectors);
-
   /* Execute on async queue and track command buffer for synchronization.
-     Signal is called inside metal_exec before commit.  */
+     Signal is called inside metal_exec before commit.
+     Hardware limit validation is performed inside metal_exec().  */
   MTL::CommandBuffer *cmd = nullptr;
   metal_exec (aq->device_ord, fn_desc, dp, dims, aq->queue, aq, &cmd);
 
