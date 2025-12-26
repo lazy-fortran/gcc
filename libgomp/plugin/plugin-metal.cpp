@@ -170,29 +170,53 @@ metal_enumerate_devices (void)
       return;
     }
 
-  /* Get system default device.  On Apple Silicon this is the integrated GPU.
-     MTL::CopyAllDevices() could be used to get all devices on Intel Macs
-     with discrete GPUs, but for now we only support the default device.  */
-  MTL::Device *device = MTL::CreateSystemDefaultDevice ();
-  if (device)
+  /* Enumerate all available Metal devices.  On Apple Silicon systems there
+     is typically one integrated GPU.  On Intel Macs there may be multiple
+     GPUs (integrated + discrete).  */
+  NS::Array *all_devices = MTL::CopyAllDevices ();
+  if (!all_devices)
     {
-      num_metal_devices = 1;
-      metal_devices[0].device = device;
-      metal_devices[0].queue = nullptr;
-      metal_devices[0].initialized = false;
-      metal_devices[0].num_buffers = 0;
-      metal_devices[0].images = nullptr;
-      pthread_mutex_init (&metal_devices[0].image_lock, nullptr);
+      num_metal_devices = 0;
+      pthread_mutex_unlock (&metal_lock);
+      return;
+    }
+
+  NS::UInteger device_count = all_devices->count ();
+  if (device_count > MAX_METAL_DEVICES)
+    device_count = MAX_METAL_DEVICES;
+
+  num_metal_devices = 0;
+  for (NS::UInteger i = 0; i < device_count; i++)
+    {
+      MTL::Device *device
+	= static_cast<MTL::Device *>(all_devices->object (i));
+      if (!device)
+	continue;
+
+      /* Retain the device since CopyAllDevices returns an autoreleased array.  */
+      device->retain ();
+
+      metal_devices[num_metal_devices].device = device;
+      metal_devices[num_metal_devices].queue = nullptr;
+      metal_devices[num_metal_devices].initialized = false;
+      metal_devices[num_metal_devices].num_buffers = 0;
+      metal_devices[num_metal_devices].images = nullptr;
+      pthread_mutex_init (&metal_devices[num_metal_devices].image_lock,
+			  nullptr);
 
       /* Store device name persistently (Metal string may be autoreleased).  */
       const char *name = device->name ()->utf8String ();
-      snprintf (metal_devices[0].name, sizeof (metal_devices[0].name),
+      snprintf (metal_devices[num_metal_devices].name,
+		sizeof (metal_devices[num_metal_devices].name),
 		"%s", name ? name : "unknown");
-      snprintf (metal_devices[0].uid, sizeof (metal_devices[0].uid),
-		"metal:%s", metal_devices[0].name);
+      snprintf (metal_devices[num_metal_devices].uid,
+		sizeof (metal_devices[num_metal_devices].uid),
+		"metal:%s", metal_devices[num_metal_devices].name);
+
+      num_metal_devices++;
     }
-  else
-    num_metal_devices = 0;
+
+  all_devices->release ();
 
   pthread_mutex_unlock (&metal_lock);
 }
