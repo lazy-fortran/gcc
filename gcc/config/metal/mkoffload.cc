@@ -470,8 +470,6 @@ main (int argc, char **argv)
   bool fPIC = false;
   bool fpic = false;
   const char *dumppfx = NULL;
-  struct obstack input_files_obstack;
-  obstack_init (&input_files_obstack);
 
   for (int i = 1; i < argc; i++)
     {
@@ -511,16 +509,7 @@ main (int argc, char **argv)
       else if (strcmp (argv[i], "-dumpbase") == 0
 	       && i + 1 < argc)
 	dumppfx = argv[++i];
-      else if (argv[i][0] != '-')
-	{
-	  /* Assume this is an input object file.  */
-	  obstack_ptr_grow (&input_files_obstack, argv[i]);
-	}
     }
-
-  /* Finalize input files list.  */
-  obstack_ptr_grow (&input_files_obstack, NULL);
-  const char **input_files = XOBFINISH (&input_files_obstack, const char **);
 
   if (!(fopenacc ^ fopenmp))
     fatal_error (input_location, "either %<-fopenacc%> or %<-fopenmp%> "
@@ -552,21 +541,15 @@ main (int argc, char **argv)
     {
       if (!strcmp (argv[ix], "-o") && ix + 1 != argc)
 	outname = argv[++ix];
-      else if (argv[ix][0] != '-')
-	{
-	  /* Skip input files here - they will be added separately below.  */
-	  continue;
-	}
       else
 	obstack_ptr_grow (&argv_obstack, argv[ix]);
     }
 
-  /* Add input object files for LTO processing.  */
-  for (const char **file = input_files; *file; file++)
-    obstack_ptr_grow (&argv_obstack, *file);
-
   if (!dumppfx)
     dumppfx = outname;
+
+  if (!outname)
+    fatal_error (input_location, "no input files specified");
 
   msl_dumpbase = concat (dumppfx, ".c", NULL);
   if (save_temps)
@@ -635,7 +618,7 @@ main (int argc, char **argv)
 
       in = fopen (msl_name, "r");
       if (!in)
-	fatal_error (input_location, "cannot open intermediate file");
+	fatal_error (input_location, "cannot open intermediate msl file");
 
       process (in, out, omp_requires);
       fclose (in);
@@ -647,7 +630,6 @@ main (int argc, char **argv)
 
   free_id_maps (func_ids);
   free_id_maps (var_ids);
-  obstack_free (&input_files_obstack, NULL);
 
   return 0;
 }
