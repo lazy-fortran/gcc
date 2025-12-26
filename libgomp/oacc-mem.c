@@ -1281,11 +1281,35 @@ goacc_enter_data_internal (struct gomp_device_descr *acc_dev, size_t mapnum,
 
 	  gomp_mutex_lock (&acc_dev->lock);
 
+	  /* For Fortran allocatable arrays, TO_PSET + POINTER mapping groups
+	     can create multiple tgt->list entries that reference the same splay
+	     tree key (the array descriptor address).  gomp_map_vars_internal
+	     increments refcount once per list entry, resulting in refcount=2
+	     for a two-entry group.  However, exit_data only sends one RELEASE
+	     mapping per descriptor, decrementing both refcount and
+	     dynamic_refcount by 1 each.  To maintain enter/exit symmetry, we
+	     increment dynamic_refcount only once per unique key and decrement
+	     refcount to compensate for duplicates.  */
+	  splay_tree_key prev_key = NULL;
 	  for (size_t j = 0; j < tgt->list_count; j++)
 	    {
 	      n = tgt->list[j].key;
 	      if (n && !tgt->list[j].is_attach)
-		n->dynamic_refcount++;
+		{
+		  if (n != prev_key)
+		    {
+		      n->dynamic_refcount++;
+		      prev_key = n;
+		    }
+		  else
+		    {
+		      /* Duplicate key: adjust refcount down to compensate for
+			 gomp_map_vars_internal counting it twice.  */
+		      if (n->refcount != REFCOUNT_INFINITY
+			  && n->refcount != REFCOUNT_ACC_MAP_DATA)
+			n->refcount--;
+		    }
+		}
 	    }
 	}
 
