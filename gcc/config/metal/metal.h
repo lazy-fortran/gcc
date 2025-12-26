@@ -197,6 +197,9 @@ struct metal_args {
 #define ASM_DECLARE_FUNCTION_NAME(FILE, NAME, DECL) \
   metal_declare_function_name (FILE, NAME, DECL)
 
+#define ASM_DECLARE_FUNCTION_SIZE(STREAM, NAME, DECL) \
+  metal_function_end (STREAM)
+
 #define GLOBAL_ASM_OP "// .global "
 
 #define DWARF2_ASM_LINE_DEBUG_INFO 0
