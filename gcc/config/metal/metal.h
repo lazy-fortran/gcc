@@ -202,7 +202,7 @@ struct metal_args {
   fputs (NAME, FILE)
 
 #define ASM_GENERATE_INTERNAL_LABEL(LABEL, PREFIX, NUM) \
-  sprintf (LABEL, "*%s%ld", PREFIX, (long)(NUM))
+  snprintf (LABEL, 100, "*%s%ld", PREFIX, (long)(NUM))
 
 #define ASM_DECLARE_OBJECT_NAME(FILE, NAME, DECL) \
   metal_declare_object_name (FILE, NAME, DECL)
