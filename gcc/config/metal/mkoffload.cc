@@ -197,7 +197,7 @@ read_file (FILE *stream, size_t *plen)
   return buffer;
 }
 
-/* Process input file and generate MSL output.  */
+/* Process input file and generate metallib binary output.  */
 
 static void
 process (FILE *in, FILE *out, uint32_t omp_requires)
@@ -206,72 +206,82 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   const char *input = read_file (in, &len);
   const char *comma;
   id_map const *id;
-  unsigned obj_count = 0;
+
+  /* First pass: extract mapping directives and save MSL to temporary file.  */
+  const char *msl_source_file;
+  if (save_temps)
+    msl_source_file = concat (msl_dumpbase, ".metal", NULL);
+  else
+    msl_source_file = make_temp_file (".metal");
+
+  FILE *msl_out = fopen (msl_source_file, "w");
+  if (!msl_out)
+    fatal_error (input_location, "cannot open '%s'", msl_source_file);
+
+  /* Parse input and extract mapping directives.  */
+  for (size_t i = 0; i < len; i++)
+    {
+      /* Check for mapping directives at start of line.  */
+      bool is_directive = false;
+      if (startswith (input + i, "//VAR_MAP "))
+	{
+	  record_id (input + i + 10, &vars_tail);
+	  is_directive = true;
+	}
+      else if (startswith (input + i, "//FUNC_MAP "))
+	{
+	  record_id (input + i + 11, &funcs_tail);
+	  is_directive = true;
+	}
+      else if (startswith (input + i, "//IND_FUNC_MAP "))
+	{
+	  record_id (input + i + 15, &funcs_tail);
+	  is_directive = true;
+	}
+
+      if (is_directive)
+	{
+	  /* Skip the entire directive line.  */
+	  while (i < len && input[i] != '\n')
+	    i++;
+	}
+      else
+	{
+	  /* Write character to MSL file.  */
+	  fputc (input[i], msl_out);
+	}
+    }
+
+  fclose (msl_out);
+
+  /* Compile MSL to metallib.  */
+  if (!metallib_name)
+    {
+      if (save_temps)
+	metallib_name = concat (msl_dumpbase, ".metallib", NULL);
+      else
+	metallib_name = make_temp_file (".metallib");
+    }
+
+  compile_metal (msl_source_file, metallib_name);
+
+  if (!save_temps)
+    maybe_unlink (msl_source_file);
 
   fprintf (out, "#include <stdint.h>\n\n");
 
-  /* Dump out char arrays for each MSL object file.  These are
-     terminated by a NUL.  Read the actual MSL code from the compiler
-     output and embed it as a C string, similar to NVPTX PTX handling.  */
-  for (size_t i = 0; i != len;)
-    {
-      char c;
+  /* Embed the metallib binary using #embed directive.  */
+  fprintf (out, "static const unsigned char metal_code[] = {\n"
+	   "#embed \"%s\"\n"
+	   "};\n\n", metallib_name);
 
-      fprintf (out, "static const char msl_code_%u[] =\n\t\"", obj_count++);
-      while ((c = input[i++]))
-	{
-	  switch (c)
-	    {
-	    case '\r':
-	      continue;
-	    case '\n':
-	      fprintf (out, "\\n\"\n\t\"");
-	      /* Look for mapping directives on subsequent lines.  */
-	      while (startswith (input + i, "//"))
-		{
-		  i += 2;
-
-		  if (startswith (input + i, "VAR_MAP "))
-		    record_id (input + i + 8, &vars_tail);
-		  else if (startswith (input + i, "FUNC_MAP "))
-		    record_id (input + i + 9, &funcs_tail);
-		  else if (startswith (input + i, "IND_FUNC_MAP "))
-		    record_id (input + i + 13, &funcs_tail);
-		  else
-		    {
-		      /* Not a mapping directive, restore position and continue.  */
-		      i -= 2;
-		      break;
-		    }
-		  /* Skip to next line.  */
-		  while (i < len && input[i++] != '\n')
-		    continue;
-		}
-	      continue;
-	    case '"':
-	    case '\\':
-	      putc ('\\', out);
-	      break;
-	    default:
-	      break;
-	    }
-	  putc (c, out);
-	}
-      fprintf (out, "\";\n\n");
-    }
-
-  const unsigned file_cnt = obj_count;
-  gcc_assert (file_cnt > 0);
-
-  /* Dump out array of MSL code objects.  */
-  fprintf (out, "static const struct msl_obj {\n"
-	   "  const char *code;\n"
+  /* Create metal_obj array pointing to the embedded binary.  */
+  fprintf (out, "static const struct metal_obj {\n"
+	   "  const void *data;\n"
 	   "  __SIZE_TYPE__ size;\n"
-	   "} msl_objs[] = {");
-  unsigned ix;
-  for (comma = "", ix = 0; ix != obj_count; comma = ",", ix++)
-    fprintf (out, "%s\n\t{msl_code_%u, sizeof (msl_code_%u)}", comma, ix, ix);
-  fprintf (out, "\n};\n\n");
+	   "} metal_objs[] = {\n"
+	   "  {metal_code, sizeof (metal_code)}\n"
+	   "};\n\n");
 
   /* Dump out variable idents.  */
   fprintf (out, "static const char *const var_mappings[] = {");
@@ -292,18 +302,19 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   fprintf (out,
 	   "static const struct metal_data {\n"
 	   "  uintptr_t omp_requires_mask;\n"
-	   "  const struct msl_obj *msl_objs;\n"
-	   "  unsigned msl_num;\n"
+	   "  const struct metal_obj *metal_objs;\n"
+	   "  unsigned metal_num;\n"
 	   "  const char *const *var_names;\n"
 	   "  unsigned var_num;\n"
-	   "  const struct metal_fn *fn_names;\n"
+	   "  const struct metal_fn *fn_descs;\n"
 	   "  unsigned fn_num;\n"
+	   "  unsigned ind_fn_num;\n"
 	   "} metal_data = {\n"
-	   "  %d, msl_objs, sizeof (msl_objs) / sizeof (msl_objs[0]),\n"
-	   "  var_mappings,"
-	   "  sizeof (var_mappings) / sizeof (var_mappings[0]),\n"
-	   "  func_mappings,"
-	   "  sizeof (func_mappings) / sizeof (func_mappings[0])\n"
+	   "  %d,\n"
+	   "  metal_objs, sizeof (metal_objs) / sizeof (metal_objs[0]),\n"
+	   "  var_mappings, sizeof (var_mappings) / sizeof (var_mappings[0]),\n"
+	   "  func_mappings, sizeof (func_mappings) / sizeof (func_mappings[0]),\n"
+	   "  0\n"
 	   "};\n\n", omp_requires);
 
   fprintf (out, "#ifdef __cplusplus\n"
