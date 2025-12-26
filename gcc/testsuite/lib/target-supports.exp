@@ -12163,6 +12163,31 @@ proc check_effective_target_offload_gcn { } {
     } "-foffload=amdgcn-amdhsa" ]
 }
 
+# Return 1 if the compiler has been configured with Metal offloading.
+
+proc check_effective_target_offload_metal { } {
+    return [check_no_compiler_messages offload_metal assembly {
+	int main () {return 0;}
+    } "-foffload=metal" ]
+}
+
+# Return 1 if the host has Apple Metal toolchain available via xcrun.
+
+proc check_effective_target_metal_xcrun { } {
+    if { ![istarget *-*-darwin*] } {
+	return 0
+    }
+
+    return [check_runtime metal_xcrun {
+	#include <stdlib.h>
+	int main () {
+	  int r1 = system ("xcrun -sdk macosx -find metal >/dev/null 2>&1");
+	  int r2 = system ("xcrun -sdk macosx -find metallib >/dev/null 2>&1");
+	  return (r1 != 0 || r2 != 0);
+	}
+    } "" ]
+}
+
 # Return 1 if the target support -fprofile-update=atomic
 proc check_effective_target_profile_update_atomic {} {
     return [check_no_compiler_messages profile_update_atomic assembly {
