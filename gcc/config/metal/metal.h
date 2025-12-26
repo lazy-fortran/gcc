@@ -39,6 +39,10 @@ enum metal_addr_space {
 
 #define TARGET_CPU_CPP_BUILTINS() metal_cpu_cpp_builtins ()
 
+/* Avoid the default in ../../gcc.cc, which adds "-pthread", which is not
+   supported for metal.  */
+#define GOMP_SELF_SPECS ""
+
 /* Driver specs.  Metal is an offload-only target without standalone
    execution support, so these specs are empty.  */
 
