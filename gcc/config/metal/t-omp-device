@@ -1,0 +1,4 @@
+omp-device-properties-metal:
+	echo kind: gpu > $@
+	echo arch: metal >> $@
+	echo isa: msl_2_4 msl_3_0 msl_3_1 >> $@
