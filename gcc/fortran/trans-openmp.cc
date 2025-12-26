@@ -3825,6 +3825,107 @@ gfc_trans_omp_clauses (stmtblock_t *block, gfc_omp_clauses *clauses,
 	      else
 		sorry ("unhandled expression");
 
+	      /* For enter/exit data on allocatable components, also map/unmap
+		 scalar fields of the parent derived type.  This ensures:
+		 1. Scalars are available on device in parallel regions
+		 2. Mapping state stays consistent for remapping after realloc
+		 The gimplifier groups these into GOMP_MAP_STRUCT with unified
+		 refcount, so all elements are mapped/unmapped together.  */
+	      if ((op == EXEC_OACC_ENTER_DATA || op == EXEC_OMP_TARGET_ENTER_DATA
+		   || op == EXEC_OACC_EXIT_DATA || op == EXEC_OMP_TARGET_EXIT_DATA)
+		  && n->expr && n->expr->ref
+		  && lastref && lastref->type == REF_ARRAY)
+		{
+		  gfc_ref *parent_ref = NULL;
+		  gfc_ref *mapped_ref = NULL;
+
+		  /* Find the component ref before the array ref.  */
+		  for (gfc_ref *ref = n->expr->ref; ref; ref = ref->next)
+		    if (ref->type == REF_COMPONENT)
+		      {
+			parent_ref = mapped_ref;
+			mapped_ref = ref;
+		      }
+
+		  if (mapped_ref != NULL)
+		    {
+		      gfc_symbol *parent_sym;
+		      tree base;
+
+		      if (parent_ref != NULL)
+			{
+			  /* Skip if path to parent has array refs.  */
+			  bool has_array_ref = false;
+			  for (gfc_ref *ref = n->expr->ref; ref != mapped_ref;
+			       ref = ref->next)
+			    if (ref->type == REF_ARRAY)
+			      {
+				has_array_ref = true;
+				break;
+			      }
+			  if (has_array_ref)
+			    goto finalize_map_clause;
+
+			  parent_sym = parent_ref->u.c.component->ts.u.derived;
+			  gfc_se base_se;
+			  gfc_init_se (&base_se, NULL);
+			  base_se.expr = gfc_maybe_dereference_var (n->sym, decl);
+			  for (gfc_ref *ref = n->expr->ref; ref != mapped_ref;
+			       ref = ref->next)
+			    if (ref->type == REF_COMPONENT)
+			      gfc_conv_component_ref (&base_se, ref);
+			  base = base_se.expr;
+			}
+		      else
+			{
+			  if (n->expr->ref->type == REF_ARRAY)
+			    goto finalize_map_clause;
+			  parent_sym = n->sym->ts.u.derived;
+			  base = gfc_maybe_dereference_var (n->sym, decl);
+			}
+
+		      if (parent_sym == NULL)
+			goto finalize_map_clause;
+
+		      gfc_component *mapped_comp = mapped_ref->u.c.component;
+		      bool is_exit = (op == EXEC_OACC_EXIT_DATA
+				      || op == EXEC_OMP_TARGET_EXIT_DATA);
+
+		      for (gfc_component *comp = parent_sym->components;
+			   comp; comp = comp->next)
+			{
+			  if (comp == mapped_comp)
+			    continue;
+			  if (comp->attr.pointer || comp->attr.allocatable
+			      || comp->attr.dimension)
+			    continue;
+			  if (comp->ts.type != BT_INTEGER
+			      && comp->ts.type != BT_REAL
+			      && comp->ts.type != BT_LOGICAL
+			      && comp->ts.type != BT_COMPLEX
+			      && comp->ts.type != BT_CHARACTER)
+			    continue;
+
+			  if (comp->backend_decl == NULL_TREE)
+			    gfc_get_derived_type (parent_sym);
+			  if (comp->backend_decl == NULL_TREE)
+			    continue;
+
+			  tree field = comp->backend_decl;
+			  tree ftype = TREE_TYPE (field);
+			  tree cref = fold_build3_loc (input_location,
+						       COMPONENT_REF, ftype,
+						       base, field, NULL_TREE);
+			  tree c = build_omp_clause (map_loc, OMP_CLAUSE_MAP);
+			  OMP_CLAUSE_SET_MAP_KIND (c, is_exit ? GOMP_MAP_DELETE
+							      : GOMP_MAP_TO);
+			  OMP_CLAUSE_DECL (c) = cref;
+			  OMP_CLAUSE_SIZE (c) = TYPE_SIZE_UNIT (ftype);
+			  omp_clauses = gfc_trans_add_clause (c, omp_clauses);
+			}
+		    }
+		}
+
 	      finalize_map_clause:
 
 	      omp_clauses = gfc_trans_add_clause (node, omp_clauses);
