@@ -217,6 +217,9 @@ process_obj_file (const char *obj_filename)
 	error ("%s: %s", obj_filename, errmsg);
       else
 	error ("%s: %s: %s", obj_filename, errmsg, xstrerror (err));
+      simple_object_release_read (sobj);
+      close (fd);
+      return;
     }
 
   if (verbose)
@@ -627,6 +630,8 @@ main (int argc, char **argv)
 	fprintf (stderr, "Input file: %s\n", *file);
       process_obj_file (*file);
     }
+
+  obstack_free (&input_files_obstack, NULL);
 
   if (!(fopenacc ^ fopenmp))
     fatal_error (input_location, "either %<-fopenacc%> or %<-fopenmp%> "
