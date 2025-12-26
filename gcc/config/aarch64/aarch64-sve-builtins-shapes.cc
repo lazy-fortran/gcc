@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "system.h"
+#include <algorithm>
 #include "coretypes.h"
 #include "tm.h"
 #include "basic-block.h"

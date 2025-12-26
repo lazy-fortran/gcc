@@ -7897,7 +7897,11 @@
 	(lo_sum:P (match_operand:P 1 "register_operand" "r")
 		  (match_operand 2 "aarch64_valid_symref" "S")))]
   ""
-  "add\\t%<w>0, %<w>1, :lo12:%c2"
+  {
+    return (TARGET_MACHO
+	    ? "add\\t%<w>0, %<w>1, %c2@PAGEOFF"
+	    : "add\\t%<w>0, %<w>1, :lo12:%c2");
+  }
   [(set_attr "type" "alu_imm")]
 )
 

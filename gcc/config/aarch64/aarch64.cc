@@ -109,6 +109,19 @@
 /* Defined for convenience.  */
 #define POINTER_BYTES (POINTER_SIZE / BITS_PER_UNIT)
 
+/* The generic Darwin Mach-O code expects each Mach-O target to provide
+   machopic_output_stub.  The AArch64/Darwin support in this tree does not
+   currently implement the Mach-O stub machinery; provide a definition to
+   satisfy the linker and fail clearly if it is ever called.  */
+#if TARGET_MACHO
+void
+machopic_output_stub (FILE *, const char *, const char *)
+{
+  fatal_error (UNKNOWN_LOCATION,
+	       "Mach-O stub output is not implemented for AArch64/Darwin");
+}
+#endif
+
 /* Maximum bytes set for an inline memset expansion.  With -Os use 3 STP
    and 1 MOVI/DUP (same size as a call).  */
 #define MAX_SET_SIZE(speed) (speed ? 256 : 96)
@@ -13188,15 +13201,31 @@ aarch64_print_operand (FILE *f, rtx x, int code)
 	}
       break;
 
-    case 'A':
-      if (GET_CODE (x) == HIGH)
-	x = XEXP (x, 0);
+	case 'A':
+	  if (GET_CODE (x) == HIGH)
+	    x = XEXP (x, 0);
 
-      switch (aarch64_classify_symbolic_expression (x))
-	{
-	case SYMBOL_SMALL_GOT_4G:
-	  asm_fprintf (asm_out_file, ":got:");
-	  break;
+	  if (TARGET_MACHO)
+	    {
+	      const char *suffix = "@PAGE";
+	      switch (aarch64_classify_symbolic_expression (x))
+		{
+		case SYMBOL_SMALL_GOT_4G:
+		  suffix = "@GOTPAGE";
+		  break;
+		default:
+		  break;
+		}
+	      output_addr_const (asm_out_file, x);
+	      asm_fprintf (asm_out_file, "%s", suffix);
+	      break;
+	    }
+
+	  switch (aarch64_classify_symbolic_expression (x))
+		{
+		case SYMBOL_SMALL_GOT_4G:
+		  asm_fprintf (asm_out_file, ":got:");
+		  break;
 
 	case SYMBOL_SMALL_TLSGD:
 	  asm_fprintf (asm_out_file, ":tlsgd:");
@@ -13218,18 +13247,34 @@ aarch64_print_operand (FILE *f, rtx x, int code)
 	  gcc_unreachable ();
 	  break;
 
-	default:
-	  break;
-	}
-      output_addr_const (asm_out_file, x);
-      break;
+		default:
+		  break;
+		}
+	      output_addr_const (asm_out_file, x);
+	      break;
 
-    case 'L':
-      switch (aarch64_classify_symbolic_expression (x))
-	{
-	case SYMBOL_SMALL_GOT_4G:
-	  asm_fprintf (asm_out_file, ":got_lo12:");
-	  break;
+	    case 'L':
+	      if (TARGET_MACHO)
+		{
+		  const char *suffix = "@PAGEOFF";
+		  switch (aarch64_classify_symbolic_expression (x))
+		    {
+		    case SYMBOL_SMALL_GOT_4G:
+		      suffix = "@GOTPAGEOFF";
+		      break;
+		    default:
+		      break;
+		    }
+		  output_addr_const (asm_out_file, x);
+		  asm_fprintf (asm_out_file, "%s", suffix);
+		  break;
+		}
+
+	      switch (aarch64_classify_symbolic_expression (x))
+		{
+		case SYMBOL_SMALL_GOT_4G:
+		  asm_fprintf (asm_out_file, ":got_lo12:");
+		  break;
 
 	case SYMBOL_SMALL_TLSGD:
 	  asm_fprintf (asm_out_file, ":tlsgd_lo12:");
@@ -13259,11 +13304,11 @@ aarch64_print_operand (FILE *f, rtx x, int code)
 	  asm_fprintf (asm_out_file, ":gottprel:");
 	  break;
 
-	default:
-	  break;
-	}
-      output_addr_const (asm_out_file, x);
-      break;
+		default:
+		  break;
+		}
+	      output_addr_const (asm_out_file, x);
+	      break;
 
     case 'G':
       switch (aarch64_classify_symbolic_expression (x))
@@ -13438,11 +13483,20 @@ aarch64_print_address_internal (FILE *f, machine_mode mode, rtx x,
 	  }
 	break;
 
-      case ADDRESS_LO_SUM:
-	asm_fprintf (f, "[%s, #:lo12:", reg_names [REGNO (addr.base)]);
-	output_addr_const (f, addr.offset);
-	asm_fprintf (f, "]");
-	return true;
+	      case ADDRESS_LO_SUM:
+		if (TARGET_MACHO)
+		  {
+		    asm_fprintf (f, "[%s, ", reg_names [REGNO (addr.base)]);
+		    output_addr_const (f, addr.offset);
+		    asm_fprintf (f, "@PAGEOFF]");
+		  }
+		else
+		  {
+		    asm_fprintf (f, "[%s, #:lo12:", reg_names [REGNO (addr.base)]);
+		    output_addr_const (f, addr.offset);
+		    asm_fprintf (f, "]");
+		  }
+		return true;
 
       case ADDRESS_SYMBOLIC:
 	output_addr_const (f, x);
@@ -33057,7 +33111,7 @@ aarch64_run_selftests (void)
 #undef TARGET_ASM_ALIGNED_SI_OP
 #define TARGET_ASM_ALIGNED_SI_OP "\t.word\t"
 
-#if TARGET_PECOFF
+#if TARGET_PECOFF || TARGET_MACHO
 #undef TARGET_ASM_UNALIGNED_HI_OP
 #define TARGET_ASM_UNALIGNED_HI_OP TARGET_ASM_ALIGNED_HI_OP
 #undef TARGET_ASM_UNALIGNED_SI_OP
