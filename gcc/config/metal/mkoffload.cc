@@ -286,7 +286,8 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 	   "#embed \"%s\" if_empty (error_metallib_is_empty)\n"
 	   "};\n\n", metallib_name);
 
-  /* Create metal_obj array pointing to the embedded binary.  */
+  /* Create metal_obj array pointing to the embedded binary.
+     Must match struct definition in libgomp/plugin/plugin-metal.cpp.  */
   fprintf (out, "static const struct metal_obj {\n"
 	   "  const void *data;\n"
 	   "  __SIZE_TYPE__ size;\n"
@@ -303,7 +304,8 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
       fprintf (out, "%s\n\t\"%s\"", comma, id->msl_name);
   fprintf (out, "\n};\n\n");
 
-  /* Dump out function idents.  */
+  /* Dump out function idents.
+     Must match struct definition in libgomp/plugin/plugin-metal.cpp.  */
   fprintf (out, "static const struct metal_fn_launch {\n"
 	   "  const char *fn;\n"
 	   "  unsigned short dim[%d];\n"
@@ -316,6 +318,9 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 	       id->dim ? id->dim : ", {0, 0, 0}");
   fprintf (out, "\n};\n\n");
 
+  /* Offload image header structure passed to runtime plugin.
+     Must match struct definition in libgomp/plugin/plugin-metal.cpp.
+     This structure is passed to GOMP_OFFLOAD_load_image as target_data.  */
   fprintf (out,
 	   "static const struct metal_tdata {\n"
 	   "  uintptr_t omp_requires_mask;\n"
