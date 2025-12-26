@@ -436,7 +436,7 @@ metal_print_operand (FILE *file, rtx x, int code)
 
     case 0:
       if (REG_P (x))
-	fprintf (file, "r%d", REGNO (x));
+	fprintf (file, "_reg%d", REGNO (x));
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
       else
@@ -465,62 +465,80 @@ metal_write_as_kernel (tree attrs)
   return lookup_attribute ("kernel", attrs) != NULL_TREE;
 }
 
-/* Emit a Metal kernel parameter declaration with buffer attribute.
-   BUFFER_INDEX is the buffer binding index, TYPE is the parameter type.
-   Returns the next buffer index to use.  */
+/* Emit declarations for pseudo-registers used in the function.
+   This follows the NVPTX backend approach of declaring all pseudos
+   in the function prologue.  */
 
-static int
-metal_write_kernel_arg (FILE *file, int buffer_index, tree type, bool first)
+static void
+metal_emit_register_declarations (FILE *file)
 {
-  machine_mode mode = TYPE_MODE (type);
-
-  if (mode == VOIDmode)
-    return buffer_index;
-
-  if (!first)
-    fprintf (file, ",\n    ");
-
-  /* Determine if this is a pointer type and extract pointee type info.  */
-  if (POINTER_TYPE_P (type))
+  /* Iterate through all pseudo-registers beyond virtual registers.  */
+  int maxregs = max_reg_num ();
+  for (int i = LAST_VIRTUAL_REGISTER + 1; i < maxregs; i++)
     {
-      tree pointee_type = TREE_TYPE (type);
-      machine_mode pointee_mode = TYPE_MODE (pointee_type);
-      addr_space_t as = TYPE_ADDR_SPACE (pointee_type);
-      const char *addrspace = metal_addrspace_string (as);
+      if (regno_reg_rtx[i] != const0_rtx)
+	{
+	  machine_mode mode = PSEUDO_REGNO_MODE (i);
 
-      /* Default to device address space for pointers without explicit space.
-         In Metal, kernel pointer parameters must have an address space qualifier.
-         ADDR_SPACE_GENERIC means no explicit qualifier was specified in source,
-         so we default to 'device' which is the most common for GPU memory.  */
-      if (as == ADDR_SPACE_GENERIC)
-        addrspace = "device ";
+	  /* Determine if register should be unsigned.
+	     For simplicity, we default to signed types for non-float modes.
+	     This matches common C/C++ semantics.  */
+	  bool unsigned_p = false;
 
-      /* Determine signedness for integer types.  */
-      bool unsigned_p = false;
-      if (INTEGRAL_TYPE_P (pointee_type))
-        unsigned_p = TYPE_UNSIGNED (pointee_type);
-      const char *msl_type = metal_msl_type_from_mode (pointee_mode, unsigned_p);
+	  /* Skip void mode registers.  */
+	  if (mode == VOIDmode)
+	    continue;
 
-      fprintf (file, "%s%s* arg%d [[buffer(%d)]]",
-               addrspace, msl_type, buffer_index, buffer_index);
-
-      return buffer_index + 1;
+	  const char *type_str = metal_msl_type_from_mode (mode, unsigned_p);
+	  fprintf (file, "  %s _reg%d;\n", type_str, i);
+	}
     }
-  else
+}
+
+/* Emit kernel parameter declarations.
+
+   Metal kernels receive arguments in a packed struct (matching NVPTX/GOMP model).
+   The GOMP runtime allocates device memory, copies all kernel arguments into it
+   (both pointers and scalars), and passes a pointer to this memory as devaddrs.
+
+   The plugin binds this memory as buffer(0), so the kernel receives a single
+   pointer parameter pointing to the packed argument struct.
+
+   This implementation generates individual parameter declarations and unpacks
+   them from the argument buffer in the kernel prologue, maintaining compatibility
+   with the GOMP argument passing convention while using idiomatic Metal code.  */
+
+static void
+metal_write_kernel_params_unpacked (FILE *file, tree fntype, tree decl)
+{
+  tree args = TYPE_ARG_TYPES (fntype);
+  bool prototyped = true;
+
+  if (!args)
     {
-      /* Non-pointer parameters - passed by value as scalars.
-         Metal does not allow buffer attributes on scalar parameters.
-         Scalars are passed directly and don't consume buffer binding slots.  */
-      bool unsigned_p = false;
-      if (INTEGRAL_TYPE_P (type))
-        unsigned_p = TYPE_UNSIGNED (type);
-      const char *msl_type = metal_msl_type_from_mode (mode, unsigned_p);
-
-      fprintf (file, "%s arg%d",
-               msl_type, buffer_index);
-
-      return buffer_index;  /* Don't increment - scalars don't use buffer slots */
+      args = DECL_ARGUMENTS (decl);
+      prototyped = false;
     }
+
+  /* Count parameters to determine if we need argument unpacking.  */
+  int param_count = 0;
+  for (tree t = args; t != NULL_TREE; t = TREE_CHAIN (t))
+    param_count++;
+
+  if (param_count == 0)
+    {
+      /* No parameters - only add thread position builtins.  */
+      fprintf (file, "uint3 tid [[thread_position_in_grid]],\n");
+      fprintf (file, "    uint3 tgid [[threadgroup_position_in_grid]]");
+      return;
+    }
+
+  /* Emit single pointer parameter for packed arguments.
+     The GOMP runtime packs all arguments (pointers and scalars) into
+     device memory and passes a pointer to this memory region.  */
+  fprintf (file, "constant void* _args_ptr [[buffer(0)]],\n");
+  fprintf (file, "    uint3 tid [[thread_position_in_grid]],\n");
+  fprintf (file, "    uint3 tgid [[threadgroup_position_in_grid]]");
 }
 
 /* Implement ASM_DECLARE_FUNCTION_NAME.  Emit [[kernel]] attribute
@@ -538,40 +556,19 @@ metal_declare_function_name (FILE *file, const char *name, tree decl)
   fprintf (file, "void %s(", name);
 
   /* Emit parameter list.  */
-  int buffer_index = 0;
-  bool first = true;
-
   if (is_kernel)
     {
       tree fntype = TREE_TYPE (decl);
-      tree args = TYPE_ARG_TYPES (fntype);
-      bool prototyped = true;
-
-      if (!args)
-        {
-          args = DECL_ARGUMENTS (decl);
-          prototyped = false;
-        }
-
-      for (; args != NULL_TREE; args = TREE_CHAIN (args))
-        {
-          tree type = prototyped ? TREE_VALUE (args) : TREE_TYPE (args);
-          buffer_index = metal_write_kernel_arg (file, buffer_index, type, first);
-          first = false;
-        }
-
-      /* Add thread position builtins for kernel functions.  */
-      if (!first)
-        fprintf (file, ",\n    ");
-
-      fprintf (file, "uint3 tid [[thread_position_in_grid]],\n");
-      fprintf (file, "    uint3 tgid [[threadgroup_position_in_grid]]");
+      metal_write_kernel_params_unpacked (file, fntype, decl);
     }
 
   fprintf (file, ")");
 
   /* Emit opening brace for function body.  */
   fprintf (file, "\n{\n");
+
+  /* Emit declarations for all pseudo-registers used in this function.  */
+  metal_emit_register_declarations (file);
 }
 
 /* Terminate a function by writing a closing brace to FILE.
