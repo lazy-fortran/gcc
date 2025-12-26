@@ -369,14 +369,31 @@ metal_write_as_kernel (tree attrs)
 }
 
 /* Implement ASM_DECLARE_FUNCTION_NAME.  Emit [[kernel]] attribute
-   for functions marked with the kernel attribute.  */
+   for functions marked with the kernel attribute, followed by function
+   signature and opening brace.  */
 
 void
 metal_declare_function_name (FILE *file, const char *name, tree decl)
 {
   if (metal_write_as_kernel (DECL_ATTRIBUTES (decl)))
     fprintf (file, "[[kernel]] ");
-  fprintf (file, "void %s", name);
+  fprintf (file, "void %s(", name);
+
+  /* Emit parameter list.  For now, emit empty parameter list.
+     Full parameter handling will be implemented in future work.  */
+  fprintf (file, ")");
+
+  /* Emit opening brace for function body.  */
+  fprintf (file, "\n{\n");
+}
+
+/* Terminate a function by writing a closing brace to FILE.
+   This is called via ASM_DECLARE_FUNCTION_SIZE.  */
+
+void
+metal_function_end (FILE *file)
+{
+  fprintf (file, "}\n");
 }
 
 /* Implement TARGET_ASM_FILE_START.  */
