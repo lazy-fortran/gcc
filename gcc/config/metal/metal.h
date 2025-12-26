@@ -86,15 +86,24 @@
 #define Pmode DImode
 #define STACK_SIZE_MODE Pmode
 
-/* Registers.  Metal is a virtual target - define minimal registers.  */
-#define FIRST_PSEUDO_REGISTER 16
-#define FIXED_REGISTERS	    { 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
-#define CALL_USED_REGISTERS { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }
+/* Registers.  Metal is a virtual target - provide a reasonably large hard
+   register set so IRA/LRA do not immediately spill everything to memory.  */
+#define FIRST_PSEUDO_REGISTER 32
+#define FIXED_REGISTERS							\
+  { 1, 1, 1, 1, 1, 1, 1,						\
+    0, 0, 0, 0, 0, 0, 0, 0, 0,						\
+    0, 0, 0, 0, 0, 0, 0, 0,						\
+    0, 0, 0, 0, 0, 0, 0, 0 }
+#define CALL_USED_REGISTERS						\
+  { 1, 1, 1, 1, 1, 1, 1,						\
+    1, 1, 1, 1, 1, 1, 1, 1, 1,						\
+    1, 1, 1, 1, 1, 1, 1, 1,						\
+    1, 1, 1, 1, 1, 1, 1, 1 }
 
 /* Register Classes.  */
 enum reg_class             {  NO_REGS,    ALL_REGS,	LIM_REG_CLASSES };
 #define REG_CLASS_NAMES    { "NO_REGS",  "ALL_REGS" }
-#define REG_CLASS_CONTENTS { { 0x0000 }, { 0xFFFF } }
+#define REG_CLASS_CONTENTS { { 0x00000000 }, { 0xFFFFFFFF } }
 #define N_REG_CLASSES (int) LIM_REG_CLASSES
 
 #define GENERAL_REGS ALL_REGS
@@ -141,7 +150,9 @@ enum reg_class             {  NO_REGS,    ALL_REGS,	LIM_REG_CLASSES };
   {									\
     "%value", "%stack", "%frame", "%args",				\
     "%chain", "%hr5", "%hr6", "%hr7",					\
-    "%hr8", "%hr9", "%hr10", "%hr11", "%hr12", "%hr13", "%hr14", "%hr15" \
+    "%hr8", "%hr9", "%hr10", "%hr11", "%hr12", "%hr13", "%hr14", "%hr15", \
+    "%hr16", "%hr17", "%hr18", "%hr19", "%hr20", "%hr21", "%hr22", "%hr23", \
+    "%hr24", "%hr25", "%hr26", "%hr27", "%hr28", "%hr29", "%hr30", "%hr31" \
   }
 
 #define FIRST_PARM_OFFSET(FNDECL) ((void)(FNDECL), 0)

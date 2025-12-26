@@ -93,7 +93,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #undef ENDFILE_SPEC
 #define ENDFILE_SPEC \
-  " " TM_DESTRUCTOR
+  DARWIN_CRTOFFLOADEND " " TM_DESTRUCTOR
 
 /* The arch is known as 'arm64' by the system tools.  */
 #define DARWIN_ARCH_SPEC "arm64"

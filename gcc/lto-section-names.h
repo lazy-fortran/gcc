@@ -25,7 +25,7 @@ along with GCC; see the file COPYING3.  If not see
    name for the functions and static_initializers.  For other types of
    sections a '.' and the section type are appended.  */
 #define LTO_SECTION_NAME_PREFIX ".gnu.lto_"
-#if OBJECT_FORMAT_MACHO
+#if OBJECT_FORMAT_MACHO || (defined (ACCEL_COMPILER) && defined (__APPLE__))
 #define OFFLOAD_SECTION_NAME_PREFIX "__GNU_OFFLD_LTO,"
 #else
 #define OFFLOAD_SECTION_NAME_PREFIX ".gnu.offload_lto_"
@@ -38,6 +38,11 @@ extern const char *section_name_prefix;
 /* Segment name for LTO sections.  This is only used for Mach-O.  */
 
 #define LTO_SEGMENT_NAME "__GNU_LTO"
+
+#if OBJECT_FORMAT_MACHO || (defined (ACCEL_COMPILER) && defined (__APPLE__))
+/* Segment name used for offload LTO wrapper sections on Mach-O.  */
+#define OFFLOAD_LTO_SEGMENT_NAME "__GNU_OFFLD_LTO"
+#endif
 
 #if OBJECT_FORMAT_MACHO
 #define OFFLOAD_VAR_TABLE_SECTION_NAME "__GNU_OFFLOAD,__vars"

@@ -106,8 +106,16 @@ lto_obj_file_open (const char *filename, bool writable)
   if (!writable)
     {
       simple_object_attributes *attrs;
+      const char *segment_name = LTO_SEGMENT_NAME;
 
-      lo->sobj_r = simple_object_start_read (lo->fd, offset, LTO_SEGMENT_NAME,
+#if defined (ACCEL_COMPILER) && defined (OFFLOAD_LTO_SEGMENT_NAME)
+      /* Offload LTO wrapper objects are stored in a different Mach-O segment
+	 than regular LTO.  Accelerator compilers only consume offload wrapper
+	 objects, so always use the offload segment name.  */
+      segment_name = OFFLOAD_LTO_SEGMENT_NAME;
+#endif
+
+      lo->sobj_r = simple_object_start_read (lo->fd, offset, segment_name,
 					     &errmsg, &err);
       if (lo->sobj_r == NULL)
 	goto fail_errmsg;
@@ -132,8 +140,14 @@ lto_obj_file_open (const char *filename, bool writable)
   else
     {
       gcc_assert (saved_attributes != NULL);
+      const char *segment_name = LTO_SEGMENT_NAME;
+
+#if defined (ACCEL_COMPILER) && defined (OFFLOAD_LTO_SEGMENT_NAME)
+      segment_name = OFFLOAD_LTO_SEGMENT_NAME;
+#endif
+
       lo->sobj_w = simple_object_start_write (saved_attributes,
-					      LTO_SEGMENT_NAME,
+					      segment_name,
 					      &errmsg, &err);
       if (lo->sobj_w == NULL)
 	goto fail_errmsg;

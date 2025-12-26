@@ -592,6 +592,16 @@ extern GTY(()) int darwin_ms_struct;
    : -lemutls_w	" DARWIN_HEAP_T_LIB "					  \
   }"
 
+/* Offloading needs crtoffloadbegin/crtoffloadend to define the begin/end
+   markers referenced by crtoffloadtable.o.  */
+#if ENABLE_OFFLOADING == 1
+#define DARWIN_CRTOFFLOADBEGIN "%{fopenacc|fopenmp:crtoffloadbegin%O%s}"
+#define DARWIN_CRTOFFLOADEND   "%{fopenacc|fopenmp:crtoffloadend%O%s}"
+#else
+#define DARWIN_CRTOFFLOADBEGIN ""
+#define DARWIN_CRTOFFLOADEND   ""
+#endif
+
 /* We specify crt0.o as -lcrt0.o so that ld will search the library path.  */
 
 #undef  STARTFILE_SPEC
@@ -609,11 +619,11 @@ extern GTY(()) int darwin_ms_struct;
                                 %{!object:%{preload:-lcrt0.o}		    \
                                   %{!preload: %(darwin_crt1)		    \
 					      %(darwin_crt2)}}}}}}}	    \
- %(darwin_crt3) "
+ %(darwin_crt3) " DARWIN_CRTOFFLOADBEGIN " "
 
 /* We want a destructor last in the list.  */
 #define TM_DESTRUCTOR "%{fgnu-tm: -lcrttme.o}"
-#define ENDFILE_SPEC TM_DESTRUCTOR
+#define ENDFILE_SPEC DARWIN_CRTOFFLOADEND " " TM_DESTRUCTOR
 
 #define DARWIN_EXTRA_SPECS						\
   { "darwin_crt1", DARWIN_CRT1_SPEC },					\

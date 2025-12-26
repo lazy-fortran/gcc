@@ -45,11 +45,17 @@
   (ior (match_operand 0 "metal_register_operand")
        (match_code "const_int")))
 
+(define_predicate "metal_direct_call_operand"
+  (match_code "mem")
+{
+  rtx addr = XEXP (op, 0);
+  return SYMBOL_REF_P (addr) || LABEL_REF_P (addr);
+})
+
 ;; Constraints
 
-(define_constraint "R"
-  "A pseudo register."
-  (match_code "reg"))
+(define_register_constraint "R" "ALL_REGS"
+  "Any Metal register.")
 
 ;; Unspec constants
 
@@ -81,39 +87,65 @@
   [(set (match_operand:SI 0 "nonimmediate_operand")
 	(match_operand:SI 1 "general_operand"))]
   ""
-  "")
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (SImode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
 
 (define_insn "*movsi_insn"
-  [(set (match_operand:SI 0 "nonimmediate_operand" "=R,R,m")
-	(match_operand:SI 1 "general_operand" "Ri,m,R"))]
-  "!MEM_P (operands[0]) || REG_P (operands[1])"
+  [(set (match_operand:SI 0 "nonimmediate_operand" "=R,R,m,m")
+	(match_operand:SI 1 "general_operand" "Ri,m,R,Ri"))]
+  ""
 	  "@
 	   %0 = %1;
-	   %0 = *(%A1int*)%1;
-	   /* */*(%A0int*)%0 = %1;"
-	  [(set_attr "type" "move,load,store")])
+	   %0 = *(device int*)%1;
+	   /* */*(device int*)%0 = %1;
+	   /* */*(device int*)%0 = %1;"
+	  [(set_attr "type" "move,load,store,store")])
 
 (define_expand "movdi"
   [(set (match_operand:DI 0 "nonimmediate_operand")
 	(match_operand:DI 1 "general_operand"))]
   ""
-  "")
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (DImode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
 
 (define_insn "*movdi_insn"
-  [(set (match_operand:DI 0 "nonimmediate_operand" "=R,R,m")
-	(match_operand:DI 1 "general_operand" "Ri,m,R"))]
-  "!MEM_P (operands[0]) || REG_P (operands[1])"
+  [(set (match_operand:DI 0 "nonimmediate_operand" "=R,R,m,m")
+	(match_operand:DI 1 "general_operand" "Ri,m,R,Ri"))]
+  ""
 	  "@
 	   %0 = %1;
-	   %0 = *(%A1int64_t*)%1;
-	   /* */*(%A0int64_t*)%0 = %1;"
-	  [(set_attr "type" "move,load,store")])
+	   %0 = *(device int64_t*)%1;
+	   /* */*(device int64_t*)%0 = %1;
+	   /* */*(device int64_t*)%0 = %1;"
+	  [(set_attr "type" "move,load,store,store")])
 
 (define_expand "movsf"
   [(set (match_operand:SF 0 "nonimmediate_operand")
 	(match_operand:SF 1 "general_operand"))]
   ""
-  "")
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (SFmode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
 
 (define_insn "*movsf_insn"
   [(set (match_operand:SF 0 "nonimmediate_operand" "=R,R,m")
@@ -121,15 +153,23 @@
   "!MEM_P (operands[0]) || REG_P (operands[1])"
 	  "@
 	   %0 = %1;
-	   %0 = *(%A1float*)%1;
-	   /* */*(%A0float*)%0 = %1;"
+	   %0 = *(device float*)%1;
+	   /* */*(device float*)%0 = %1;"
 	  [(set_attr "type" "move,load,store")])
 
 (define_expand "movdf"
   [(set (match_operand:DF 0 "nonimmediate_operand")
 	(match_operand:DF 1 "general_operand"))]
   ""
-  "")
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (DFmode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
 
 (define_insn "*movdf_insn"
   [(set (match_operand:DF 0 "nonimmediate_operand" "=R,R,m")
@@ -137,8 +177,8 @@
   "!MEM_P (operands[0]) || REG_P (operands[1])"
 	  "@
 	   %0 = %1;
-	   %0 = *(%A1double*)%1;
-	   /* */*(%A0double*)%0 = %1;"
+	   %0 = *(device double*)%1;
+	   /* */*(device double*)%0 = %1;"
 	  [(set_attr "type" "move,load,store")])
 
 ;; Half-precision floating-point operations
@@ -147,7 +187,15 @@
   [(set (match_operand:HF 0 "nonimmediate_operand")
 	(match_operand:HF 1 "general_operand"))]
   ""
-  "")
+{
+  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+    {
+      rtx tmp = gen_reg_rtx (HFmode);
+      emit_move_insn (tmp, operands[1]);
+      emit_move_insn (operands[0], tmp);
+      DONE;
+    }
+})
 
 (define_insn "*movhf_insn"
   [(set (match_operand:HF 0 "nonimmediate_operand" "=R,R,m")
@@ -155,8 +203,8 @@
   "!MEM_P (operands[0]) || REG_P (operands[1])"
 	  "@
 	   %0 = %1;
-	   %0 = *(%A1half*)%1;
-	   /* */*(%A0half*)%0 = %1;"
+	   %0 = *(device half*)%1;
+	   /* */*(device half*)%0 = %1;"
 	  [(set_attr "type" "move,load,store")])
 
 (define_insn "extendhfsf2"
@@ -915,7 +963,7 @@
 	(smin:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = min(%1, %2);"
+  "%0 = min((int)%1, (int)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "smaxsi3"
@@ -923,7 +971,7 @@
 	(smax:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = max(%1, %2);"
+  "%0 = max((int)%1, (int)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "uminsi3"
@@ -931,7 +979,7 @@
 	(umin:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = min(%1, %2);"
+  "%0 = min((uint)%1, (uint)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "umaxsi3"
@@ -939,7 +987,7 @@
 	(umax:SI (match_operand:SI 1 "metal_register_operand" "R")
 		 (match_operand:SI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = max(%1, %2);"
+  "%0 = max((uint)%1, (uint)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "smindi3"
@@ -947,7 +995,7 @@
 	(smin:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = min(%1, %2);"
+  "%0 = min((long)%1, (long)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "smaxdi3"
@@ -955,7 +1003,7 @@
 	(smax:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = max(%1, %2);"
+  "%0 = max((long)%1, (long)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "umindi3"
@@ -963,7 +1011,7 @@
 	(umin:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = min(%1, %2);"
+  "%0 = min((ulong)%1, (ulong)%2);"
   [(set_attr "type" "alu")])
 
 (define_insn "umaxdi3"
@@ -971,7 +1019,7 @@
 	(umax:DI (match_operand:DI 1 "metal_register_operand" "R")
 		 (match_operand:DI 2 "metal_nonmemory_operand" "Ri")))]
   ""
-  "%0 = max(%1, %2);"
+  "%0 = max((ulong)%1, (ulong)%2);"
   [(set_attr "type" "alu")])
 
 ;; Floating point min/max
@@ -1255,12 +1303,22 @@
 (define_expand "cbranchsi4"
   [(set (pc)
 	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:SI 1 "metal_register_operand")
-			 (match_operand:SI 2 "metal_nonmemory_operand")])
+			[(match_operand:SI 1 "nonimmediate_operand")
+			 (match_operand:SI 2 "general_operand")])
 		      (label_ref (match_operand 3 ""))
 		      (pc)))]
   ""
-  "")
+{
+  /* Keep branches in SSA-ish form: force operands into registers so we do not
+     end up with MEM vs MEM compares, which IRA/LRA can struggle with in this
+     minimal backend.  */
+  if (!REG_P (operands[1]))
+    operands[1] = force_reg (SImode, operands[1]);
+
+  if (MEM_P (operands[2])
+      || (!REG_P (operands[2]) && !CONST_INT_P (operands[2])))
+    operands[2] = force_reg (SImode, operands[2]);
+})
 
 (define_insn "*branch_si"
   [(set (pc)
@@ -1663,23 +1721,39 @@
 ;; Function calls
 
 (define_expand "call"
-  [(call (match_operand:DI 0 "")
+  [(call (match_operand:QI 0 "")
 	 (match_operand 1 ""))]
   ""
 {
-  /* Metal/MSL function calls handled at source level.  */
+  emit_call_insn (gen_metal_call_insn (operands[0], operands[1]));
   DONE;
 })
 
 (define_expand "call_value"
   [(set (match_operand 0 "")
-	(call (match_operand:DI 1 "")
+	(call (match_operand:QI 1 "")
 	      (match_operand 2 "")))]
   ""
 {
-  /* Metal/MSL function calls handled at source level.  */
+  emit_call_insn (gen_metal_call_value_insn (operands[0], operands[1],
+					     operands[2]));
   DONE;
 })
+
+(define_insn "metal_call_insn"
+  [(call (match_operand:QI 0 "metal_direct_call_operand" "m")
+	 (match_operand 1 ""))]
+  ""
+  "%0();"
+  [(set_attr "type" "call")])
+
+(define_insn "metal_call_value_insn"
+  [(set (match_operand 0 "metal_register_operand" "=R")
+	(call (match_operand:QI 1 "metal_direct_call_operand" "m")
+	      (match_operand 2 "")))]
+  ""
+  "%0 = %1();"
+  [(set_attr "type" "call")])
 
 ;; Type conversions
 

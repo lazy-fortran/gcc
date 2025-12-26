@@ -2761,7 +2761,15 @@ read_cgraph_and_symbols (unsigned nfiles, const char **fnames)
   timevar_push (TV_IPA_LTO_DECL_IN);
 
 #ifdef ACCEL_COMPILER
+  /* Offload LTO wrapper sections on Mach-O store the unwrapped section names
+     (without the segment/prefix) in the wrapper name table.  When reading via
+     simple-object, section names are reported exactly as stored there, so use
+     an empty prefix on Apple hosts.  */
+#if defined (__APPLE__)
+  section_name_prefix = "";
+#else
   section_name_prefix = OFFLOAD_SECTION_NAME_PREFIX;
+#endif
   lto_stream_offload_p = true;
 #endif
 

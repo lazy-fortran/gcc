@@ -54,6 +54,29 @@
 
 static bool metal_legitimate_address_p (machine_mode, rtx, bool, code_helper);
 
+static bool
+metal_debug_enabled (void)
+{
+  static int cached = -1;
+  if (cached == -1)
+    cached = getenv ("GCC_METAL_DEBUG") ? 1 : 0;
+  return cached == 1;
+}
+
+static void
+metal_debugf (const char *fmt, ...)
+{
+  if (!metal_debug_enabled ())
+    return;
+  va_list ap;
+  va_start (ap, fmt);
+  fputs ("metal: ", stderr);
+  vfprintf (stderr, fmt, ap);
+  fputc ('\n', stderr);
+  fflush (stderr);
+  va_end (ap);
+}
+
 /* This file should be included last.  */
 #include "target-def.h"
 
@@ -77,6 +100,7 @@ metal_option_override (void)
 {
   /* Metal generates MSL source, not object code.  */
   flag_no_common = 1;
+  metal_debugf ("option_override: no_common=1");
 }
 
 /* Handle a "kernel" attribute; arguments as in
@@ -114,6 +138,7 @@ TARGET_GNU_ATTRIBUTES (metal_attribute_table,
 static void
 metal_init_builtins (void)
 {
+  metal_debugf ("init_builtins");
 #define DEF(ID, NAME, T)						\
   (metal_builtin_decls[METAL_BUILTIN_ ## ID]				\
    = add_builtin_function ("__metal_" NAME,				\
@@ -184,6 +209,10 @@ metal_expand_builtin (tree exp, rtx target, rtx ARG_UNUSED (subtarget),
 static scalar_int_mode
 metal_addr_space_pointer_mode (addr_space_t addrspace)
 {
+  static unsigned cnt;
+  if (metal_debug_enabled () && cnt++ < 20)
+    metal_debugf ("addr_space_pointer_mode[%u]: as=%d", cnt, (int) addrspace);
+
   switch (addrspace)
     {
     case ADDR_SPACE_GENERIC:
@@ -236,6 +265,11 @@ metal_addr_space_subset_p (addr_space_t subset, addr_space_t superset)
 static rtx
 metal_addr_space_convert (rtx op, tree from_type, tree to_type)
 {
+  static unsigned cnt;
+  if (metal_debug_enabled () && cnt++ < 50)
+    metal_debugf ("addr_space_convert[%u]: op=%s", cnt,
+		  GET_RTX_NAME (GET_CODE (op)));
+
   if (!from_type || !to_type)
     return op;
 
@@ -258,6 +292,10 @@ metal_addr_space_convert (rtx op, tree from_type, tree to_type)
 static rtx
 metal_function_arg (cumulative_args_t, const function_arg_info &)
 {
+  static unsigned cnt;
+  if (metal_debug_enabled () && cnt++ < 20)
+    metal_debugf ("function_arg[%u]", cnt);
+
   /* All arguments passed in memory for now.  */
   return NULL_RTX;
 }
@@ -268,6 +306,10 @@ static void
 metal_function_arg_advance (cumulative_args_t cum_v,
 			    const function_arg_info &)
 {
+  static unsigned cnt;
+  if (metal_debug_enabled () && cnt++ < 20)
+    metal_debugf ("function_arg_advance[%u]", cnt);
+
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
   cum->count++;
 }
@@ -323,6 +365,12 @@ static bool
 metal_legitimate_address_p (machine_mode mode, rtx x, bool strict,
 			    code_helper)
 {
+  static unsigned cnt;
+  if (metal_debug_enabled () && cnt++ < 80)
+    metal_debugf ("legitimate_address_p[%u]: mode=%s rtx=%s strict=%d",
+		  cnt, GET_MODE_NAME (mode), GET_RTX_NAME (GET_CODE (x)),
+		  (int) strict);
+
   /* Basic address validation for Metal address spaces.  */
   if (REG_P (x))
     return true;
@@ -426,11 +474,18 @@ metal_mem_addr_space (rtx mem)
 /* Implement PRINT_OPERAND.
 
    Supported codes:
-   'A' - Print address space qualifier for memory operand.  */
+   'A' - Print address space qualifier for memory operand.
+   'c' - Print comparison operator (==, !=, <, <=, >, >=).
+   'l' - Print a label reference.  */
 
 void
 metal_print_operand (FILE *file, rtx x, int code)
 {
+  static unsigned print_operand_count;
+  if (metal_debug_enabled () && print_operand_count++ < 50)
+    metal_debugf ("print_operand[%u]: code=%d rtx=%s",
+		  print_operand_count, code, GET_RTX_NAME (GET_CODE (x)));
+
   switch (code)
     {
     case 'A':
@@ -441,14 +496,38 @@ metal_print_operand (FILE *file, rtx x, int code)
 	}
       return;
 
+    case 'c':
+      switch (GET_CODE (x))
+	{
+	case EQ: fputs ("==", file); return;
+	case NE: fputs ("!=", file); return;
+	case LT:
+	case LTU: fputs ("<", file); return;
+	case LE:
+	case LEU: fputs ("<=", file); return;
+	case GT:
+	case GTU: fputs (">", file); return;
+	case GE:
+	case GEU: fputs (">=", file); return;
+	default:
+	  output_operand_lossage ("unsupported comparison code");
+	  return;
+	}
+
+    case 'l':
+      /* For now, labels are just printed as their assembler names.  */
+      output_addr_const (file, x);
+      return;
+
     case 0:
       if (REG_P (x))
 	fprintf (file, "_reg%d", REGNO (x));
       else if (MEM_P (x))
 	{
-	  fputs ("*(", file);
+	  /* Print the address expression for MEM operands.  Patterns that
+	     access memory are expected to add the appropriate dereference
+	     and type cast themselves.  */
 	  metal_print_operand_address (file, XEXP (x, 0));
-	  fputs (")", file);
 	}
       else if (CONST_INT_P (x))
 	fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
@@ -469,6 +548,11 @@ metal_print_operand (FILE *file, rtx x, int code)
 void
 metal_print_operand_address (FILE *file, rtx addr)
 {
+  static unsigned print_addr_count;
+  if (metal_debug_enabled () && print_addr_count++ < 50)
+    metal_debugf ("print_operand_address[%u]: rtx=%s",
+		  print_addr_count, GET_RTX_NAME (GET_CODE (addr)));
+
   switch (GET_CODE (addr))
     {
     case REG:
@@ -518,6 +602,14 @@ metal_write_as_kernel (tree attrs)
 static void
 metal_emit_register_declarations (FILE *file)
 {
+  metal_debugf ("emit_register_declarations: max_reg_num=%d",
+		max_reg_num ());
+
+  /* Declare hard registers too.  The Metal backend prints all registers as
+     C identifiers (_regN).  */
+  for (int i = 0; i < FIRST_PSEUDO_REGISTER; i++)
+    fprintf (file, "  long _reg%d;\n", i);
+
   /* Iterate through all pseudo-registers beyond virtual registers.  */
   int maxregs = max_reg_num ();
   for (int i = LAST_VIRTUAL_REGISTER + 1; i < maxregs; i++)
@@ -576,10 +668,8 @@ metal_write_kernel_params_unpacked (FILE *file, tree fntype, tree decl)
 
   if (param_count == 0)
     {
-      /* No parameters - only add thread position builtins.  */
-      fprintf (file, "uint3 tid [[thread_position_in_grid]],\n");
-      fprintf (file, "    uint3 tgid [[threadgroup_position_in_grid]]");
-      return;
+      /* Even for kernels with no explicit parameters, the OpenACC runtime
+	 passes the packed arguments buffer at buffer(0).  */
     }
 
   /* Emit single pointer parameter for packed arguments.
@@ -598,9 +688,14 @@ void
 metal_declare_function_name (FILE *file, const char *name, tree decl)
 {
   bool is_kernel = metal_write_as_kernel (DECL_ATTRIBUTES (decl));
+  if (!is_kernel && name && strstr (name, "omp_fn") != NULL)
+    is_kernel = true;
+
+  metal_debugf ("declare_function_name: %s kernel=%d", name,
+		(int) is_kernel);
 
   if (is_kernel)
-    fprintf (file, "[[kernel]] ");
+    fprintf (file, "kernel ");
 
   fprintf (file, "void %s(", name);
 
@@ -626,6 +721,7 @@ metal_declare_function_name (FILE *file, const char *name, tree decl)
 void
 metal_function_end (FILE *file)
 {
+  metal_debugf ("function_end");
   fprintf (file, "}\n");
 }
 
@@ -635,6 +731,7 @@ metal_function_end (FILE *file)
 void
 metal_declare_object_name (FILE *file, const char *name, const_tree decl)
 {
+  metal_debugf ("declare_object_name: %s", name);
   tree type = TREE_TYPE (decl);
   tree size_unit = DECL_SIZE_UNIT (decl);
   HOST_WIDE_INT obj_size = 0;
@@ -664,6 +761,8 @@ void
 metal_output_aligned_decl (FILE *file, const char *name, const_tree decl,
 			    HOST_WIDE_INT size, unsigned int align)
 {
+  metal_debugf ("output_aligned_decl: %s size=%ld align=%u",
+		name, (long) size, align);
   tree type = TREE_TYPE (decl);
   addr_space_t as = TYPE_ADDR_SPACE (type);
   const char *addrspace = metal_addrspace_string (as);
@@ -689,6 +788,7 @@ metal_output_aligned_decl (FILE *file, const char *name, const_tree decl,
 static void
 metal_file_start (void)
 {
+  metal_debugf ("file_start");
   fputs ("// Metal Shading Language output\n", asm_out_file);
   fputs ("// Generated by GCC\n\n", asm_out_file);
   fputs ("#include <metal_stdlib>\n", asm_out_file);
@@ -700,7 +800,28 @@ metal_file_start (void)
 static void
 metal_file_end (void)
 {
+  metal_debugf ("file_end");
   fputs ("\n// End of Metal output\n", asm_out_file);
+}
+
+/* Fake "sections support".  Metal output is source, so sections are ignored,
+   but the middle-end expects the global section variables to be initialized.  */
+
+static void
+metal_output_section_asm_op (const char *)
+{
+  /* Intentionally empty.  */
+}
+
+static void
+metal_asm_init_sections (void)
+{
+  text_section = get_unnamed_section (SECTION_CODE,
+				      metal_output_section_asm_op, "T");
+  data_section = get_unnamed_section (SECTION_WRITE,
+				      metal_output_section_asm_op, "D");
+  exception_section = get_unnamed_section (0,
+					   metal_output_section_asm_op, "E");
 }
 
 /* Implement TARGET_PASS_BY_REFERENCE.  */
@@ -746,6 +867,8 @@ metal_legitimate_constant_p (machine_mode, rtx)
 static void
 metal_record_offload_symbol (tree decl)
 {
+  metal_debugf ("record_offload_symbol: %s",
+		IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl)));
   switch (TREE_CODE (decl))
     {
     case VAR_DECL:
@@ -848,6 +971,9 @@ metal_record_offload_symbol (tree decl)
 
 #undef TARGET_ASM_FILE_END
 #define TARGET_ASM_FILE_END metal_file_end
+
+#undef TARGET_ASM_INIT_SECTIONS
+#define TARGET_ASM_INIT_SECTIONS metal_asm_init_sections
 
 #undef TARGET_PASS_BY_REFERENCE
 #define TARGET_PASS_BY_REFERENCE metal_pass_by_reference

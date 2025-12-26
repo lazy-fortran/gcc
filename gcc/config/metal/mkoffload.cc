@@ -250,6 +250,7 @@ record_id (const char *p1, id_map ***where)
 
 /* Forward declaration.  */
 static void compile_metal (const char *, const char *);
+static void rewrite_msl_control_flow (const char *);
 
 /* Read the whole input file.  It will be NUL terminated.  */
 
@@ -359,7 +360,8 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   if (!save_temps)
     maybe_unlink (msl_source_file);
 
-  fprintf (out, "#include <stdint.h>\n\n");
+  fprintf (out, "#include <stdint.h>\n"
+		"#include <stddef.h>\n\n");
 
   /* Embed the metallib binary using #embed directive.  */
   fprintf (out, "static const unsigned char metal_code[] = {\n"
@@ -454,6 +456,316 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   free (CONST_CAST (char *, input));
 }
 
+/* Metal Shading Language forbids labels and goto.  The current Metal backend
+   emits label/goto-style control flow, so rewrite such regions into a simple
+   basic-block interpreter (switch inside an infinite loop).  */
+
+static bool
+msl_parse_label_line (const char *line, int *label)
+{
+  while (*line == ' ' || *line == '\t')
+    line++;
+  if (*line != 'L')
+    return false;
+  line++;
+  if (*line < '0' || *line > '9')
+    return false;
+  int v = 0;
+  while (*line >= '0' && *line <= '9')
+    {
+      v = v * 10 + (*line - '0');
+      line++;
+    }
+  if (*line != ':')
+    return false;
+  line++;
+  while (*line)
+    {
+      if (*line != ' ' && *line != '\t' && *line != '\r')
+	return false;
+      line++;
+    }
+  *label = v;
+  return true;
+}
+
+static const char *
+msl_ltrim (const char *line)
+{
+  while (*line == ' ' || *line == '\t')
+    line++;
+  return line;
+}
+
+static bool
+msl_is_blank (const char *line)
+{
+  for (const char *p = line; *p; p++)
+    if (*p != ' ' && *p != '\t' && *p != '\r')
+      return false;
+  return true;
+}
+
+static bool
+msl_is_reg_decl (const char *line)
+{
+  const char *t = msl_ltrim (line);
+  return strstr (t, "_reg") != NULL && strchr (t, ';') != NULL
+    && strchr (t, '=') == NULL;
+}
+
+static void
+rewrite_msl_control_flow (const char *msl_file)
+{
+  FILE *in = fopen (msl_file, "r");
+  if (!in)
+    fatal_error (input_location, "opening %s: %m", msl_file);
+
+  size_t len = 0;
+  char *input = CONST_CAST (char *, read_file (in, &len));
+  fclose (in);
+
+  /* Split into NUL-terminated lines in-place.  */
+  size_t nlines = 0, cap = 1024;
+  char **lines = XNEWVEC (char *, cap);
+  lines[nlines++] = input;
+  for (char *p = input; *p; p++)
+    if (*p == '\n')
+      {
+	*p = 0;
+	if (nlines == cap)
+	  {
+	    cap *= 2;
+	    lines = XRESIZEVEC (char *, lines, cap);
+	  }
+	lines[nlines++] = p + 1;
+      }
+
+  bool changed = false;
+  struct obstack out_obstack;
+  obstack_init (&out_obstack);
+
+  auto append_line = [&out_obstack] (const char *s) {
+    obstack_grow (&out_obstack, s, strlen (s));
+    obstack_1grow (&out_obstack, '\n');
+  };
+
+  for (size_t i = 0; i < nlines; )
+    {
+      /* Function signature followed by an opening brace.  Signatures may span
+	 multiple lines (kernel parameter lists).  */
+      if (strstr (lines[i], "void ") != NULL)
+	{
+	  size_t func_start = i;
+	  size_t brace_line = i + 1;
+	  while (brace_line < nlines
+		 && strcmp (msl_ltrim (lines[brace_line]), "{") != 0)
+	    {
+	      /* Bail if we run into a prototype/decl.  */
+	      if (strchr (lines[brace_line], ';') != NULL)
+		break;
+	      /* Avoid scanning too far on false positives.  */
+	      if (brace_line - func_start > 64)
+		break;
+	      brace_line++;
+	    }
+	  if (brace_line >= nlines
+	      || strcmp (msl_ltrim (lines[brace_line]), "{") != 0)
+	    {
+	      append_line (lines[i]);
+	      i++;
+	      continue;
+	    }
+
+	  size_t j = brace_line;
+	  int brace_depth = 0;
+	  for (; j < nlines; j++)
+	    {
+	      for (const char *q = lines[j]; *q; q++)
+		{
+		  if (*q == '{')
+		    brace_depth++;
+		  else if (*q == '}')
+		    brace_depth--;
+		}
+	      if (brace_depth == 0 && j > brace_line)
+		break;
+	    }
+	  if (j >= nlines)
+	    {
+	      for (; i < nlines; i++)
+		append_line (lines[i]);
+	      break;
+	    }
+
+	  for (size_t k = func_start; k <= brace_line; k++)
+	    append_line (lines[k]);
+
+	  size_t body_begin = brace_line + 1;
+	  while (body_begin < j && msl_is_reg_decl (lines[body_begin]))
+	    {
+	      append_line (lines[body_begin]);
+	      body_begin++;
+	    }
+
+	  struct block { int label; size_t start; size_t end; };
+	  size_t nb = 0, bcap = 16;
+	  block *blocks = XNEWVEC (block, bcap);
+	  blocks[nb++] = { 0, body_begin, j };
+
+	  for (size_t k = body_begin; k < j; k++)
+	    {
+	      int lab;
+	      if (msl_parse_label_line (lines[k], &lab))
+		{
+		  blocks[nb - 1].end = k;
+		  if (nb == bcap)
+		    {
+		      bcap *= 2;
+		      blocks = XRESIZEVEC (block, blocks, bcap);
+		    }
+		  blocks[nb++] = { lab, k + 1, j };
+		}
+	    }
+
+	  bool has_cf = false;
+	  for (size_t bi = 0; bi < nb; bi++)
+	    for (size_t k = blocks[bi].start; k < blocks[bi].end; k++)
+	      if (strstr (lines[k], "goto L") != NULL)
+		has_cf = true;
+
+	  if (!has_cf && nb == 1)
+	    {
+	      for (size_t k = body_begin; k < j; k++)
+		append_line (lines[k]);
+	      append_line (lines[j]);
+	      i = j + 1;
+	      free (blocks);
+	      continue;
+	    }
+
+	  changed = true;
+	  append_line ("  int __gcc_bb = 0;");
+	  append_line ("  for (;;)");
+	  append_line ("    {");
+	  append_line ("      switch (__gcc_bb)");
+	  append_line ("        {");
+
+	  for (size_t bi = 0; bi < nb; bi++)
+	    {
+	      int this_lab = blocks[bi].label;
+	      int next_lab = (bi + 1 < nb) ? blocks[bi + 1].label : -1;
+	      char hdr[64];
+	      snprintf (hdr, sizeof hdr, "        case %d:", this_lab);
+	      append_line (hdr);
+	      append_line ("          {");
+
+	      for (size_t k = blocks[bi].start; k < blocks[bi].end; k++)
+		{
+		  const char *ln = lines[k];
+		  if (msl_is_blank (ln))
+		    continue;
+
+		  const char *goto_pos = strstr (ln, "goto L");
+		  if (goto_pos)
+		    {
+		      const char *num = goto_pos + 6;
+		      int lab = 0;
+		      bool ok = false;
+		      while (*num >= '0' && *num <= '9')
+			{
+			  ok = true;
+			  lab = lab * 10 + (*num - '0');
+			  num++;
+			}
+		      if (ok)
+			{
+			  const char *trim = msl_ltrim (ln);
+			  if (startswith (trim, "if ("))
+			    {
+			      size_t prefix_len = goto_pos - ln;
+			      char *prefix = XNEWVEC (char, prefix_len + 1);
+			      memcpy (prefix, ln, prefix_len);
+			      prefix[prefix_len] = 0;
+			      char repl[128];
+			      snprintf (repl, sizeof repl,
+					"%s{ __gcc_bb = %d; continue; };",
+					prefix, lab);
+			      append_line (repl);
+			      free (prefix);
+			      continue;
+			    }
+			  char repl[96];
+			  snprintf (repl, sizeof repl,
+				    "          __gcc_bb = %d; continue;",
+				    lab);
+			  append_line (repl);
+			  continue;
+			}
+		    }
+
+		  append_line (ln);
+		}
+
+	      const char *last = NULL;
+	      for (size_t k = blocks[bi].end; k-- > blocks[bi].start; )
+		{
+		  if (msl_is_blank (lines[k]))
+		    continue;
+		  last = msl_ltrim (lines[k]);
+		  break;
+		}
+	      bool terminates = false;
+	      if (last)
+		terminates = (strstr (last, "continue;") != NULL
+			      || startswith (last, "return"));
+	      if (!terminates)
+		{
+		  if (next_lab >= 0)
+		    {
+		      char fall[96];
+		      snprintf (fall, sizeof fall,
+				"            __gcc_bb = %d; continue;",
+				next_lab);
+		      append_line (fall);
+		    }
+		  else
+		    append_line ("            return;");
+		}
+
+	      append_line ("          }");
+	    }
+
+	  append_line ("        default:");
+	  append_line ("          return;");
+	  append_line ("        }");
+	  append_line ("    }");
+
+	  append_line (lines[j]);
+	  i = j + 1;
+	  free (blocks);
+	  continue;
+	}
+
+      append_line (lines[i]);
+      i++;
+    }
+
+  if (changed)
+    {
+      const char *outbuf = (const char *) obstack_finish (&out_obstack);
+      FILE *outf = fopen (msl_file, "w");
+      if (!outf)
+	fatal_error (input_location, "writing %s: %m", msl_file);
+      fwrite (outbuf, 1, strlen (outbuf), outf);
+      fclose (outf);
+    }
+
+  obstack_free (&out_obstack, NULL);
+  free (lines);
+  free (input);
+}
+
 /* Compile MSL to metallib using Metal toolchain.  */
 
 static void
@@ -461,6 +773,9 @@ compile_metal (const char *msl_file, const char *metallib_file)
 {
   if (!air_name)
     air_name = make_temp_file (".air");
+
+  /* Rewrite labels/goto into switch-based control flow.  */
+  rewrite_msl_control_flow (msl_file);
 
   /* Compile .metal to .air.  */
   struct obstack argv_obstack;
@@ -498,8 +813,9 @@ compile_metal (const char *msl_file, const char *metallib_file)
   obstack_ptr_grow (&argv_obstack, air_name);
   obstack_ptr_grow (&argv_obstack, "-o");
   obstack_ptr_grow (&argv_obstack, metallib_file);
-  if (verbose)
-    obstack_ptr_grow (&argv_obstack, "-v");
+  /* Note: Apple's metallib tool uses -v for "version" (prints and exits),
+     not for "verbose".  We already print the command line ourselves when
+     verbose, so do not add any extra flags here.  */
   obstack_ptr_grow (&argv_obstack, NULL);
   const char **metallib_argv = XOBFINISH (&argv_obstack, const char **);
 
@@ -718,6 +1034,10 @@ main (int argc, char **argv)
     obstack_ptr_grow (&argv_obstack, "-save-temps");
   if (verbose)
     obstack_ptr_grow (&argv_obstack, "-v");
+  /* The offload compiler produces MSL source, not assembly/object files.
+     Prevent the driver from invoking the system assembler on the generated
+     MSL text.  */
+  obstack_ptr_grow (&argv_obstack, "-S");
   obstack_ptr_grow (&argv_obstack, "-xlto");
   switch (offload_abi)
     {
