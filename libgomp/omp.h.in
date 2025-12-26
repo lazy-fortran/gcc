@@ -381,28 +381,41 @@ extern omp_allocator_handle_t omp_get_default_allocator (void) __GOMP_NOTHROW;
 extern void omp_free (void *,
 		      omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR)
   __GOMP_NOTHROW;
+
+/* GCC supports the deallocator form of the malloc attribute; clang rejects it.
+   Keep the deallocator annotation where available, but stay compatible with
+   clang (used e.g. when building offload plugins on Darwin).  */
+#if defined(__GNUC__) && !defined(__clang__)
+# define __GOMP_ATTR_MALLOC_OMP_FREE __malloc__, __malloc__ (omp_free)
+# define __GOMP_ATTR_MALLOC_OMP_FREE_REALLOC __malloc__ (omp_free)
+#else
+# define __GOMP_ATTR_MALLOC_OMP_FREE __malloc__
+# define __GOMP_ATTR_MALLOC_OMP_FREE_REALLOC __malloc__
+#endif
+
 extern void *omp_alloc (__SIZE_TYPE__,
 			omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR)
-  __GOMP_NOTHROW __attribute__((__malloc__, __malloc__ (omp_free),
-				__alloc_size__ (1)));
+  __GOMP_NOTHROW __attribute__((__GOMP_ATTR_MALLOC_OMP_FREE,
+					__alloc_size__ (1)));
 extern void *omp_aligned_alloc (__SIZE_TYPE__, __SIZE_TYPE__,
-				omp_allocator_handle_t
-				__GOMP_DEFAULT_NULL_ALLOCATOR)
-  __GOMP_NOTHROW __attribute__((__malloc__, __malloc__ (omp_free),
-				__alloc_size__ (2), __alloc_align__ (1)));
+					omp_allocator_handle_t
+					__GOMP_DEFAULT_NULL_ALLOCATOR)
+  __GOMP_NOTHROW __attribute__((__GOMP_ATTR_MALLOC_OMP_FREE,
+					__alloc_size__ (2), __alloc_align__ (1)));
 extern void *omp_calloc (__SIZE_TYPE__, __SIZE_TYPE__,
-			 omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR)
-  __GOMP_NOTHROW __attribute__((__malloc__, __malloc__ (omp_free),
-				__alloc_size__ (1, 2)));
+				 omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR)
+  __GOMP_NOTHROW __attribute__((__GOMP_ATTR_MALLOC_OMP_FREE,
+					__alloc_size__ (1, 2)));
 extern void *omp_aligned_calloc (__SIZE_TYPE__, __SIZE_TYPE__, __SIZE_TYPE__,
-				 omp_allocator_handle_t
-				 __GOMP_DEFAULT_NULL_ALLOCATOR)
-  __GOMP_NOTHROW __attribute__((__malloc__, __malloc__ (omp_free),
-				__alloc_size__ (2, 3), __alloc_align__ (1)));
+					 omp_allocator_handle_t
+					 __GOMP_DEFAULT_NULL_ALLOCATOR)
+  __GOMP_NOTHROW __attribute__((__GOMP_ATTR_MALLOC_OMP_FREE,
+					__alloc_size__ (2, 3), __alloc_align__ (1)));
 extern void *omp_realloc (void *, __SIZE_TYPE__,
-			  omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR,
-			  omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR)
-  __GOMP_NOTHROW __attribute__((__malloc__ (omp_free), __alloc_size__ (2)));
+				  omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR,
+				  omp_allocator_handle_t __GOMP_DEFAULT_NULL_ALLOCATOR)
+  __GOMP_NOTHROW __attribute__((__GOMP_ATTR_MALLOC_OMP_FREE_REALLOC,
+				__alloc_size__ (2)));
 
 extern void omp_display_env (int) __GOMP_NOTHROW;
 
@@ -441,36 +454,56 @@ extern const char *omp_get_uid_from_device (int) __GOMP_NOTHROW;
 
 #if __cplusplus >= 201103L
 
-/* std::__throw_bad_alloc and std::__throw_bad_array_new_length.  */
-#include <bits/new_throw.h>
+#include <cstdlib>
+#include <new>
 
 namespace omp
 {
 namespace allocator
 {
 
-namespace __detail
-{
+	namespace __detail
+	{
 
-template <typename __T, omp_allocator_handle_t __Handle>
-struct __allocator_templ
-{
-  using value_type = __T;
+	[[noreturn]] inline void
+	__throw_bad_alloc ()
+	{
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+	  throw std::bad_alloc ();
+#else
+	  std::abort ();
+#endif
+	}
+
+	[[noreturn]] inline void
+	__throw_bad_array_new_length ()
+	{
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+	  throw std::bad_array_new_length ();
+#else
+	  std::abort ();
+#endif
+	}
+
+	template <typename __T, omp_allocator_handle_t __Handle>
+	struct __allocator_templ
+	{
+	  using value_type = __T;
   using pointer = __T *;
   using const_pointer = const __T *;
   using size_type = __SIZE_TYPE__;
   using difference_type = __PTRDIFF_TYPE__;
 
   __T *
-  allocate (size_type __n)
-  {
-    if (__SIZE_MAX__ / sizeof (__T) < __n)
-      std::__throw_bad_array_new_length ();
-    void *__p = omp_aligned_alloc (alignof(__T), __n * sizeof(__T), __Handle);
-    if (!__p)
-      std::__throw_bad_alloc ();
-    return static_cast <__T *> (__p);
-  }
+	  allocate (size_type __n)
+	  {
+	    if (__SIZE_MAX__ / sizeof (__T) < __n)
+	      __detail::__throw_bad_array_new_length ();
+	    void *__p = omp_aligned_alloc (alignof(__T), __n * sizeof(__T), __Handle);
+	    if (!__p)
+	      __detail::__throw_bad_alloc ();
+	    return static_cast <__T *> (__p);
+	  }
 
   void
   deallocate (__T *__p, size_type) __GOMP_NOTHROW

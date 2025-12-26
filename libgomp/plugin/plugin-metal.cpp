@@ -34,17 +34,23 @@
 /* metal-cpp requires these to be defined before including headers.  */
 #define NS_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
-#include <Metal/Metal.hpp>
+#include <Metal/MTLBuffer.hpp>
+#include <Metal/MTLCommandBuffer.hpp>
+#include <Metal/MTLCommandQueue.hpp>
+#include <Metal/MTLComputeCommandEncoder.hpp>
+#include <Metal/MTLComputePipeline.hpp>
+#include <Metal/MTLDevice.hpp>
+#include <Metal/MTLEvent.hpp>
+#include <Metal/MTLLibrary.hpp>
+#include <Metal/MTLTypes.hpp>
 #include <Foundation/Foundation.hpp>
 #include <dispatch/dispatch.h>
 
-extern "C" {
 #define _LIBGOMP_PLUGIN_INCLUDE 1
 #include "libgomp-plugin.h"
 #undef _LIBGOMP_PLUGIN_INCLUDE
 #include "gomp-constants.h"
 #include "oacc-plugin.h"
-}
 
 #include <cstddef>
 #include <cstdlib>
@@ -129,11 +135,13 @@ static int num_metal_devices = -1;
 static pthread_mutex_t metal_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Forward declarations for async queue functions.  */
+extern "C" {
 static void metal_async_queue_signal (struct goacc_asyncqueue *aq,
 				      MTL::CommandBuffer *cmd);
 static uint64_t metal_async_queue_encode_wait (struct goacc_asyncqueue *waiter_aq,
 					       struct goacc_asyncqueue *target_aq,
 					       MTL::CommandBuffer *cmd);
+}
 
 /* OpenACC async queue structure.  Each queue wraps a Metal command queue
    for asynchronous command submission.  */
@@ -1360,7 +1368,7 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
 
       if (cmd->status () == MTL::CommandBufferStatusError)
 	{
-	  MTL::Error *error = cmd->error ();
+	  NS::Error *error = cmd->error ();
 	  const char *error_msg = error
 	      ? error->localizedDescription ()->utf8String ()
 	      : "unknown error";
@@ -1517,7 +1525,7 @@ metal_async_queue_encode_wait (struct goacc_asyncqueue *waiter_aq,
   pthread_mutex_unlock (&target_aq->mutex);
 
   if (wait_value > 0)
-    cmd->encodeWaitForEvent (target_aq->event, wait_value);
+    cmd->encodeWait (target_aq->event, wait_value);
 
   return wait_value;
 }
