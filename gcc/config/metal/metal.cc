@@ -623,7 +623,10 @@ void
 metal_declare_object_name (FILE *file, const char *name, const_tree decl)
 {
   tree type = TREE_TYPE (decl);
-  HOST_WIDE_INT obj_size = tree_to_shwi (DECL_SIZE_UNIT (decl));
+  tree size_unit = DECL_SIZE_UNIT (decl);
+  HOST_WIDE_INT obj_size = 0;
+  if (size_unit && tree_fits_shwi_p (size_unit))
+    obj_size = tree_to_shwi (size_unit);
   addr_space_t as = TYPE_ADDR_SPACE (type);
   const char *addrspace = metal_addrspace_string (as);
 
