@@ -977,9 +977,25 @@ compile_offload_image (const char *target, const char *compiler_path,
 #endif
 
   if (!compiler)
-    fatal_error (input_location,
-		 "could not find %s in %s (consider using %<-B%>)",
-		 suffix + 1, compiler_path);
+    {
+      /* In an uninstalled (build-tree) compiler, mkoffload may be present
+	 directly in COMPILER_PATH rather than under accel/<target>/.
+	 Fall back to that location before failing.  */
+      free_array_of_ptrs ((void **) paths, n_paths);
+      paths = NULL;
+      n_paths = parse_env_var (compiler_path, &paths, "/mkoffload");
+      for (unsigned i = 0; i < n_paths; i++)
+	if (access_check (paths[i], X_OK) == 0)
+	  {
+	    compiler = paths[i];
+	    break;
+	  }
+
+      if (!compiler)
+	fatal_error (input_location,
+		     "could not find %s in %s (consider using %<-B%>)",
+		     suffix + 1, compiler_path);
+    }
 
   dumpbase = concat (dumppfx, "x", target, NULL);
 
@@ -1139,13 +1155,15 @@ find_crtoffloadtable (int save_temps, bool pie_or_shared, const char *dumppfx)
 }
 
 /* A subroutine of run_gcc.  Examine the open file FD for lto sections with
-   name prefix PREFIX, at FILE_OFFSET, and store any options we find in OPTS.
+   name prefix PREFIX within SEGMENT_NAME, at FILE_OFFSET, and store any
+   options we find in OPTS.
    Return true if we found a matching section, false
    otherwise.  COLLECT_GCC holds the value of the environment variable with
    the same name.  */
 
 static bool
-find_and_merge_options (int fd, off_t file_offset, const char *prefix,
+find_and_merge_options (int fd, off_t file_offset, const char *segment_name,
+			const char *prefix,
 			vec<cl_decoded_option> decoded_cl_options, bool first,
 			vec<cl_decoded_option> *opts, const char *collect_gcc)
 {
@@ -1160,7 +1178,7 @@ find_and_merge_options (int fd, off_t file_offset, const char *prefix,
     fdecoded_options = *opts;
 
   simple_object_read *sobj;
-  sobj = simple_object_start_read (fd, file_offset, "__GNU_LTO",
+  sobj = simple_object_start_read (fd, file_offset, segment_name,
 				   &errmsg, &err);
   if (!sobj)
     return false;
@@ -1523,7 +1541,8 @@ run_gcc (unsigned argc, char *argv[])
 	  continue;
 	}
 
-      if (find_and_merge_options (fd, file_offset, LTO_SECTION_NAME_PREFIX,
+      if (find_and_merge_options (fd, file_offset, LTO_SEGMENT_NAME,
+				  LTO_SECTION_NAME_PREFIX,
 				  decoded_options, fdecoded_options_first,
 				  &fdecoded_options,
 				  collect_gcc))
@@ -1821,12 +1840,24 @@ cont1:
 	  fd = open (filename, O_RDONLY | O_BINARY);
 	  if (fd == -1)
 	    fatal_error (input_location, "cannot open %s: %m", filename);
-	  if (!find_and_merge_options (fd, file_offset,
-				       OFFLOAD_SECTION_NAME_PREFIX,
-				       decoded_options,
-				       offload_fdecoded_options_first,
-				       &offload_fdecoded_options,
-				       collect_gcc))
+	  bool found = find_and_merge_options (fd, file_offset,
+					       LTO_SEGMENT_NAME,
+					       OFFLOAD_SECTION_NAME_PREFIX,
+					       decoded_options,
+					       offload_fdecoded_options_first,
+					       &offload_fdecoded_options,
+					       collect_gcc);
+	  /* On Mach-O the offload IL is streamed into a separate segment, and
+	     the options section is simply ".opts".  Fall back to this scheme
+	     if the generic lookup failed.  */
+	  if (!found)
+	    found = find_and_merge_options (fd, file_offset,
+					    "__GNU_OFFLD_LTO", "",
+					    decoded_options,
+					    offload_fdecoded_options_first,
+					    &offload_fdecoded_options,
+					    collect_gcc);
+	  if (!found)
 	    fatal_error (input_location, "cannot read %s: %m", filename);
 	  offload_fdecoded_options_first = false;
 	  close (fd);

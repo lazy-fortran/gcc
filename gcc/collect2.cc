@@ -282,6 +282,7 @@ struct lto_object_list
 };
 
 static struct lto_object_list lto_objects;
+static struct lto_object_list offload_objects;
 
 /* Special kinds of symbols that a name may denote.  */
 
@@ -594,7 +595,7 @@ maybe_run_lto_and_relink (char **lto_ld_argv, char **object_lst,
     num_lto_c_args++;
   }
 
-  if (lto_objects.first)
+  if (lto_objects.first || offload_objects.first)
     {
       char **lto_c_argv;
       const char **lto_c_ptr;
@@ -608,12 +609,36 @@ maybe_run_lto_and_relink (char **lto_ld_argv, char **object_lst,
       char **out_lto_ld_argv;
       int out_lto_ld_argv_size;
       size_t num_files;
+      char *offload_objects_arg = NULL;
 
       if (!lto_wrapper)
 	fatal_error (input_location, "environment variable "
 		     "%<COLLECT_LTO_WRAPPER%> must be set");
 
       num_lto_c_args++;
+
+      if (offload_objects.first)
+	{
+	  unsigned num_offload_files = 0;
+	  char *offload_objects_file = make_temp_file (".foffload-objects");
+	  FILE *f = fopen (offload_objects_file, "w");
+	  if (f == NULL)
+	    fatal_error (input_location, "cannot open %s: %m",
+			 offload_objects_file);
+
+	  for (list = offload_objects.first; list; list = list->next)
+	    num_offload_files++;
+
+	  /* lto-wrapper expects: "<count> <whitespace>" then one file per line.  */
+	  fprintf (f, "%u\n", num_offload_files);
+	  for (list = offload_objects.first; list; list = list->next)
+	    fprintf (f, "%s\n", list->name);
+	  fclose (f);
+
+	  offload_objects_arg = concat ("-foffload-objects=",
+					offload_objects_file, NULL);
+	  num_lto_c_args++;
+	}
 
       /* There is at least one object file containing LTO info,
          so we need to run the LTO back end and relink.
@@ -626,6 +651,9 @@ maybe_run_lto_and_relink (char **lto_ld_argv, char **object_lst,
       lto_c_ptr = CONST_CAST2 (const char **, char **, lto_c_argv);
 
       *lto_c_ptr++ = lto_wrapper;
+
+      if (offload_objects_arg)
+	*lto_c_ptr++ = offload_objects_arg;
 
       /* Add LTO objects to the wrapper command line.  */
       for (list = lto_objects.first; list; list = list->next)
@@ -2299,25 +2327,56 @@ write_aix_file (FILE *stream, struct id *list)
 
 /* Check to make sure the file is an LTO object file.  */
 
+enum lto_offload_found_mask
+{
+  FOUND_LTO = 1 << 0,
+  FOUND_OFFLOAD = 1 << 1
+};
+
+#if OBJECT_FORMAT_MACHO
+struct lto_offload_mark
+{
+  int *found;
+  int bit;
+};
+
 static int
-has_lto_section (void *data, const char *name ATTRIBUTE_UNUSED,
-		 off_t offset ATTRIBUTE_UNUSED,
-		 off_t length ATTRIBUTE_UNUSED)
+mark_lto_or_offload_section (void *data, const char *name ATTRIBUTE_UNUSED,
+			     off_t offset ATTRIBUTE_UNUSED,
+			     off_t length ATTRIBUTE_UNUSED)
+{
+  struct lto_offload_mark *mark = (struct lto_offload_mark *) data;
+
+  *mark->found |= mark->bit;
+  /* One section is enough to establish presence for this segment.  */
+  return 0;
+}
+#endif
+
+static int
+has_lto_or_offload_section (void *data, const char *name ATTRIBUTE_UNUSED,
+			    off_t offset ATTRIBUTE_UNUSED,
+			    off_t length ATTRIBUTE_UNUSED)
 {
   int *found = (int *) data;
 
-  if (!startswith (name, LTO_SECTION_NAME_PREFIX)
-      && !startswith (name, OFFLOAD_SECTION_NAME_PREFIX))
-    return 1;
+  if (startswith (name, LTO_SECTION_NAME_PREFIX))
+    *found |= FOUND_LTO;
+  if (startswith (name, OFFLOAD_SECTION_NAME_PREFIX))
+    *found |= FOUND_OFFLOAD;
 
-  *found = 1;
+  if ((*found & (FOUND_LTO | FOUND_OFFLOAD)) == (FOUND_LTO | FOUND_OFFLOAD))
+    return 0;
 
-  /* Stop iteration.  */
-  return 0;
+  return 1;
 }
 
-static bool
-is_lto_object_file (const char *prog_name)
+#if OBJECT_FORMAT_MACHO
+#define OFFLOAD_LTO_SEGMENT_NAME "__GNU_OFFLD_LTO"
+#endif
+
+static int
+lto_offload_object_file_mask (const char *prog_name)
 {
   const char *errmsg;
   int err;
@@ -2326,27 +2385,55 @@ is_lto_object_file (const char *prog_name)
   int infd = open (prog_name, O_RDONLY | O_BINARY);
 
   if (infd == -1)
-    return false;
+    return 0;
 
-  simple_object_read *inobj = simple_object_start_read (infd, inoff,
-							LTO_SEGMENT_NAME,
-							&errmsg, &err);
-  if (!inobj)
+  /* For Mach-O, offload LTO sections live in a separate segment from regular
+     LTO sections.  Scan both.  */
+  for (unsigned seg = 0; seg < 2; seg++)
     {
-      close (infd);
-      return false;
+      const char *segment_name = LTO_SEGMENT_NAME;
+#if OBJECT_FORMAT_MACHO
+      if (seg == 1)
+	segment_name = OFFLOAD_LTO_SEGMENT_NAME;
+#else
+      if (seg == 1)
+	break;
+#endif
+
+      simple_object_read *inobj = simple_object_start_read (infd, inoff,
+							    segment_name,
+							    &errmsg, &err);
+      if (!inobj)
+	continue;
+
+#if OBJECT_FORMAT_MACHO
+      /* On Mach-O, libiberty's simple-object callback sees only the section
+	 name (not the segment).  Since we already restrict the scan to a
+	 specific segment via simple_object_start_read, any section found in
+	 that segment is sufficient to establish presence.  */
+      struct lto_offload_mark mark;
+      mark.found = &found;
+      mark.bit = (seg == 0) ? FOUND_LTO : FOUND_OFFLOAD;
+      errmsg = simple_object_find_sections (inobj, mark_lto_or_offload_section,
+					    (void *) &mark, &err);
+#else
+      errmsg = simple_object_find_sections (inobj, has_lto_or_offload_section,
+					    (void *) &found, &err);
+#endif
+      simple_object_release_read (inobj);
+
+      if (errmsg)
+	break;
+      if ((found & (FOUND_LTO | FOUND_OFFLOAD)) == (FOUND_LTO | FOUND_OFFLOAD))
+	break;
     }
 
-  errmsg = simple_object_find_sections (inobj, has_lto_section,
-					(void *) &found, &err);
-  simple_object_release_read (inobj);
   close (infd);
-  if (! errmsg && found)
-    return true;
 
   if (errmsg)
     fatal_error (0, "%s: %s", errmsg, xstrerror (err));
-  return false;
+
+  return found;
 }
 
 /* Generic version to scan the name list of the loaded program for
@@ -2377,9 +2464,11 @@ scan_prog_file (const char *prog_name, scanpass which_pass,
      gcc cannot currently handle.  */
   if (which_pass == PASS_LTOINFO)
     {
-      if(is_lto_object_file (prog_name)) {
+      int found_mask = lto_offload_object_file_mask (prog_name);
+      if (found_mask & FOUND_LTO)
 	add_lto_object (&lto_objects, prog_name);
-      }
+      if (found_mask & FOUND_OFFLOAD)
+	add_lto_object (&offload_objects, prog_name);
       return;
     }
 
