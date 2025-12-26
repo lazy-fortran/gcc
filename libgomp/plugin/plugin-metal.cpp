@@ -1702,14 +1702,15 @@ GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1,
   /* Encode GPU-side wait for aq1's event.  */
   metal_async_queue_encode_wait (aq2, aq1, wait_cmd);
 
-  /* Track and commit the wait command.  */
+  /* Commit BEFORE tracking to prevent race condition.  */
+  wait_cmd->commit ();
+
+  /* Track the committed command buffer.  */
   pthread_mutex_lock (&aq2->mutex);
   if (aq2->last_cmd)
     aq2->last_cmd->release ();
   aq2->last_cmd = wait_cmd;
   pthread_mutex_unlock (&aq2->mutex);
-
-  wait_cmd->commit ();
 
   return true;
 }
