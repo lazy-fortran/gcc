@@ -42,9 +42,17 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #if defined(HAVE_GAS_HIDDEN) && ENABLE_OFFLOADING == 1
 
+/* Mach-O uses __SEGMENT,__section naming; ELF uses .section_name.
+   These names must match those in gcc/lto-section-names.h.  */
+#ifdef __APPLE__
+#define OFFLOAD_FUNC_TABLE_SECTION_NAME "__GNU_OFFLOAD,__funcs"
+#define OFFLOAD_IND_FUNC_TABLE_SECTION_NAME "__GNU_OFFLOAD,__ind_fns"
+#define OFFLOAD_VAR_TABLE_SECTION_NAME "__GNU_OFFLOAD,__vars"
+#else
 #define OFFLOAD_FUNC_TABLE_SECTION_NAME ".gnu.offload_funcs"
 #define OFFLOAD_IND_FUNC_TABLE_SECTION_NAME ".gnu.offload_ind_funcs"
 #define OFFLOAD_VAR_TABLE_SECTION_NAME ".gnu.offload_vars"
+#endif
 
 #ifdef CRT_BEGIN
 
