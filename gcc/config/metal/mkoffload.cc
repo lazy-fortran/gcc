@@ -86,6 +86,86 @@ static const char *msl_dumpbase;
 enum offload_abi offload_abi = OFFLOAD_ABI_UNSET;
 const char *offload_abi_host_opts = NULL;
 
+/* Check whether NAME can be accessed in MODE.  This is like access,
+   except that it never considers directories to be executable.  */
+
+static int
+access_check (const char *name, int mode)
+{
+  if (mode == X_OK)
+    {
+      struct stat st;
+
+      if (stat (name, &st) < 0
+	  || S_ISDIR (st.st_mode))
+	return -1;
+    }
+
+  return access (name, mode);
+}
+
+/* Parse STR, saving found tokens into PVALUES and return their number.
+   Tokens are assumed to be delimited by ':'.  */
+
+static unsigned
+parse_env_var (const char *str, char ***pvalues)
+{
+  const char *curval, *nextval;
+  char **values;
+  unsigned num = 1, i;
+
+  if (str == NULL || *str == '\0')
+    {
+      *pvalues = NULL;
+      return 0;
+    }
+
+  curval = strchr (str, ':');
+  while (curval)
+    {
+      num++;
+      curval = strchr (curval + 1, ':');
+    }
+
+  values = (char **) xmalloc (num * sizeof (char *));
+  curval = str;
+  nextval = strchr (curval, ':');
+  if (nextval == NULL)
+    nextval = strchr (curval, '\0');
+
+  for (i = 0; i < num; i++)
+    {
+      int l = nextval - curval;
+      values[i] = (char *) xmalloc (l + 1);
+      memcpy (values[i], curval, l);
+      values[i][l] = 0;
+      curval = nextval + 1;
+      nextval = strchr (curval, ':');
+      if (nextval == NULL)
+	nextval = strchr (curval, '\0');
+    }
+  *pvalues = values;
+  return num;
+}
+
+/* Auxiliary function that frees elements of PTR and PTR itself.
+   N is number of elements to be freed.  If PTR is NULL, nothing is freed.
+   If an element is NULL, subsequent elements are not freed.  */
+
+static void
+free_array_of_ptrs (void **ptr, unsigned n)
+{
+  if (ptr == NULL)
+    return;
+  for (unsigned i = 0; i < n; i++)
+    {
+      if (ptr[i] == NULL)
+	break;
+      free (ptr[i]);
+    }
+  free (ptr);
+}
+
 /* Delete tempfiles.  */
 
 void
@@ -491,7 +571,61 @@ main (int argc, char **argv)
 
   const char *driver = getenv ("OFFLOAD_TARGET_DEFAULT");
   if (!driver)
-    driver = "metal-apple-darwin";
+    {
+      /* Find the offload compiler similarly to nvptx/gcn mkoffload: prefer a
+	 compiler adjacent to COLLECT_GCC, then search COMPILER_PATH.  This
+	 avoids relying on PATH and makes in-tree builds usable via -B.  */
+      const char *gcc_exec = basename (ASTRDUP (collect_gcc));
+      const char *gcc_path = dirname (ASTRDUP (collect_gcc));
+
+      if (strcmp (gcc_exec, collect_gcc) == 0)
+	/* collect_gcc has no path, so it was found in PATH.  */
+	gcc_path = NULL;
+
+      bool found = false;
+      char *driver_buf = NULL;
+
+      if (gcc_path != NULL)
+	{
+	  size_t len = strlen (gcc_path) + 1 + strlen (GCC_INSTALL_NAME) + 1;
+	  driver_buf = XNEWVEC (char, len);
+	  sprintf (driver_buf, "%s/%s", gcc_path, GCC_INSTALL_NAME);
+	  if (access_check (driver_buf, X_OK) == 0)
+	    found = true;
+	}
+      else
+	found = true;
+
+      if (!found)
+	{
+	  /* Look in all COMPILER_PATHs for GCC_INSTALL_NAME.  */
+	  char **paths = NULL;
+	  unsigned n_paths = parse_env_var (getenv ("COMPILER_PATH"), &paths);
+	  for (unsigned i = 0; i < n_paths; i++)
+	    {
+	      size_t len = strlen (paths[i]) + 1 + strlen (GCC_INSTALL_NAME) + 1;
+	      driver_buf = XRESIZEVEC (char, driver_buf, len);
+	      sprintf (driver_buf, "%s/%s", paths[i], GCC_INSTALL_NAME);
+	      if (access_check (driver_buf, X_OK) == 0)
+		{
+		  found = true;
+		  break;
+		}
+	    }
+	  free_array_of_ptrs ((void **) paths, n_paths);
+	}
+
+      if (!found)
+	fatal_error (input_location,
+		     "offload compiler %s not found (consider using %<-B%> "
+		     "or setting %<OFFLOAD_TARGET_DEFAULT%>)",
+		     GCC_INSTALL_NAME);
+
+      if (gcc_path == NULL)
+	driver = GCC_INSTALL_NAME;
+      else
+	driver = driver_buf;
+    }
 
   /* We may be called with all the arguments stored in some file and
      passed with @file.  Expand them into argv before processing.  */
