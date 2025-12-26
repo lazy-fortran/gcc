@@ -207,38 +207,58 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 
   fprintf (out, "#include <stdint.h>\n\n");
 
-  /* Generate MSL code arrays.  For now, we create a simple placeholder
-     that demonstrates the structure.  A full implementation would parse
-     GIMPLE/LTO and translate to MSL.  */
-  fprintf (out, "static const char msl_code_%u[] =\n", obj_count++);
-  fprintf (out, "\t\"#include <metal_stdlib>\\n\"\n");
-  fprintf (out, "\t\"using namespace metal;\\n\\n\"\n");
-
-  /* Parse input for function/variable mappings.  */
-  for (size_t i = 0; i != len; i++)
+  /* Dump out char arrays for each MSL object file.  These are
+     terminated by a NUL.  Read the actual MSL code from the compiler
+     output and embed it as a C string, similar to NVPTX PTX handling.  */
+  for (size_t i = 0; i != len;)
     {
-      /* Look for mapping directives similar to NVPTX format.  */
-      if (startswith (input + i, "//VAR_MAP "))
-	record_id (input + i + 10, &vars_tail);
-      else if (startswith (input + i, "//FUNC_MAP "))
-	record_id (input + i + 11, &funcs_tail);
+      char c;
 
-      /* Skip to next line.  */
-      while (i < len && input[i] != '\n')
-	i++;
+      fprintf (out, "static const char msl_code_%u[] =\n\t\"", obj_count++);
+      while ((c = input[i++]))
+	{
+	  switch (c)
+	    {
+	    case '\r':
+	      continue;
+	    case '\n':
+	      fprintf (out, "\\n\"\n\t\"");
+	      /* Look for mapping directives on subsequent lines.  */
+	      while (startswith (input + i, "//"))
+		{
+		  i += 2;
+
+		  if (startswith (input + i, "VAR_MAP "))
+		    record_id (input + i + 8, &vars_tail);
+		  else if (startswith (input + i, "FUNC_MAP "))
+		    record_id (input + i + 9, &funcs_tail);
+		  else if (startswith (input + i, "IND_FUNC_MAP "))
+		    record_id (input + i + 13, &funcs_tail);
+		  else
+		    {
+		      /* Not a mapping directive, restore position and continue.  */
+		      i -= 2;
+		      break;
+		    }
+		  /* Skip to next line.  */
+		  while (i < len && input[i++] != '\n')
+		    continue;
+		}
+	      continue;
+	    case '"':
+	    case '\\':
+	      putc ('\\', out);
+	      break;
+	    default:
+	      break;
+	    }
+	  putc (c, out);
+	}
+      fprintf (out, "\";\n\n");
     }
 
-  /* Generate example kernel for each function.  */
-  for (id = func_ids; id; id = id->next)
-    {
-      fprintf (out, "\t\"kernel void %s(", id->msl_name);
-      fprintf (out, "device float* data [[buffer(0)]], ");
-      fprintf (out, "uint tid [[thread_position_in_grid]]) {\\n\"\n");
-      fprintf (out, "\t\"  // Placeholder kernel body\\n\"\n");
-      fprintf (out, "\t\"}\\n\\n\"");
-    }
-
-  fprintf (out, ";\n\n");
+  const unsigned file_cnt = obj_count;
+  gcc_assert (file_cnt > 0);
 
   /* Dump out array of MSL code objects.  */
   fprintf (out, "static const struct msl_obj {\n"
