@@ -43,6 +43,10 @@
 #include "builtins.h"
 #include "attribs.h"
 #include "gimplify.h"
+#include "omp-general.h"
+#include "omp-low.h"
+#include "omp-offload.h"
+#include "gomp-constants.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -453,6 +457,50 @@ metal_legitimate_constant_p (machine_mode, rtx)
   return true;
 }
 
+/* Record a symbol for mkoffload to enter into the mapping table.  */
+
+static void
+metal_record_offload_symbol (tree decl)
+{
+  switch (TREE_CODE (decl))
+    {
+    case VAR_DECL:
+      fprintf (asm_out_file, "//VAR_MAP \"%s\"\n",
+	       IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl)));
+      break;
+
+    case FUNCTION_DECL:
+      {
+	tree attr = oacc_get_fn_attrib (decl);
+	/* OpenMP offloading does not set this attribute.  */
+	tree dims = attr ? TREE_VALUE (attr) : NULL_TREE;
+
+	fprintf (asm_out_file, "//");
+	if (lookup_attribute ("omp declare target indirect",
+			      DECL_ATTRIBUTES (decl)))
+	  fprintf (asm_out_file, "IND_FUNC_MAP");
+	else
+	  fprintf (asm_out_file, "FUNC_MAP");
+	fprintf (asm_out_file, " \"%s\"",
+		 IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl)));
+
+	for (; dims; dims = TREE_CHAIN (dims))
+	  {
+	    int size = TREE_INT_CST_LOW (TREE_VALUE (dims));
+
+	    gcc_assert (!TREE_PURPOSE (dims));
+	    fprintf (asm_out_file, ", %#x", size);
+	  }
+
+	fprintf (asm_out_file, "\n");
+      }
+      break;
+
+    default:
+      gcc_unreachable ();
+    }
+}
+
 /* Initialize the GCC target structure.  */
 
 #undef TARGET_OPTION_OVERRIDE
@@ -525,5 +573,8 @@ metal_legitimate_constant_p (machine_mode, rtx)
 
 #undef TARGET_LEGITIMATE_CONSTANT_P
 #define TARGET_LEGITIMATE_CONSTANT_P metal_legitimate_constant_p
+
+#undef TARGET_RECORD_OFFLOAD_SYMBOL
+#define TARGET_RECORD_OFFLOAD_SYMBOL metal_record_offload_symbol
 
 struct gcc_target targetm = TARGET_INITIALIZER;
