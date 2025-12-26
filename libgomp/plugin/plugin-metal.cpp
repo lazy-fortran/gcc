@@ -50,19 +50,10 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <pthread.h>
+#include <unordered_map>
 
 /* Maximum number of Metal devices supported.  */
 #define MAX_METAL_DEVICES 8
-
-/* Maximum number of tracked buffer allocations per device.  */
-#define MAX_METAL_BUFFERS 4096
-
-/* Buffer allocation tracking entry.  */
-struct metal_buffer_entry
-{
-  void *ptr;		/* Pointer returned by buffer->contents().  */
-  MTL::Buffer *buffer;	/* The Metal buffer object.  */
-};
 
 /* Metal object binary in offload image.
    Must match struct definition in gcc/config/metal/mkoffload.cc.  */
@@ -123,9 +114,8 @@ struct metal_device
   char name[128];  /* Persistent copy of device name for property queries.  */
   bool initialized;
 
-  /* Buffer allocation tracking.  */
-  struct metal_buffer_entry buffers[MAX_METAL_BUFFERS];
-  int num_buffers;
+  /* Buffer allocation tracking with dynamic hash table.  */
+  std::unordered_map<void*, MTL::Buffer*> *buffers;
 
   /* Loaded images tracking.  */
   struct metal_image_data *images;	/* Linked list of loaded images.  */
@@ -199,7 +189,8 @@ metal_enumerate_devices (void)
       metal_devices[num_metal_devices].device = device;
       metal_devices[num_metal_devices].queue = nullptr;
       metal_devices[num_metal_devices].initialized = false;
-      metal_devices[num_metal_devices].num_buffers = 0;
+      metal_devices[num_metal_devices].buffers
+	= new std::unordered_map<void*, MTL::Buffer*>();
       metal_devices[num_metal_devices].images = nullptr;
       pthread_mutex_init (&metal_devices[num_metal_devices].image_lock,
 			  nullptr);
@@ -227,12 +218,7 @@ static bool
 metal_add_buffer (int ord, void *ptr, MTL::Buffer *buffer)
 {
   struct metal_device *dev = &metal_devices[ord];
-  if (dev->num_buffers >= MAX_METAL_BUFFERS)
-    return false;
-
-  dev->buffers[dev->num_buffers].ptr = ptr;
-  dev->buffers[dev->num_buffers].buffer = buffer;
-  dev->num_buffers++;
+  (*dev->buffers)[ptr] = buffer;
   return true;
 }
 
@@ -243,16 +229,12 @@ static MTL::Buffer *
 metal_remove_buffer (int ord, void *ptr)
 {
   struct metal_device *dev = &metal_devices[ord];
-  for (int i = 0; i < dev->num_buffers; i++)
+  auto it = dev->buffers->find (ptr);
+  if (it != dev->buffers->end ())
     {
-      if (dev->buffers[i].ptr == ptr)
-	{
-	  MTL::Buffer *buffer = dev->buffers[i].buffer;
-	  /* Move last entry to fill the gap.  */
-	  dev->buffers[i] = dev->buffers[dev->num_buffers - 1];
-	  dev->num_buffers--;
-	  return buffer;
-	}
+      MTL::Buffer *buffer = it->second;
+      dev->buffers->erase (it);
+      return buffer;
     }
   return nullptr;
 }
@@ -266,12 +248,12 @@ metal_find_buffer (int ord, const void *ptr)
   struct metal_device *dev = &metal_devices[ord];
   uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
 
-  for (int i = 0; i < dev->num_buffers; i++)
+  for (auto &entry : *dev->buffers)
     {
-      uintptr_t buf_start = reinterpret_cast<uintptr_t>(dev->buffers[i].ptr);
-      uintptr_t buf_end = buf_start + dev->buffers[i].buffer->length ();
+      uintptr_t buf_start = reinterpret_cast<uintptr_t>(entry.first);
+      uintptr_t buf_end = buf_start + entry.second->length ();
       if (addr >= buf_start && addr < buf_end)
-	return dev->buffers[i].buffer;
+	return entry.second;
     }
   return nullptr;
 }
@@ -419,16 +401,16 @@ GOMP_OFFLOAD_fini_device (int ord)
   pthread_mutex_unlock (&metal_devices[ord].image_lock);
 
   /* Release all remaining buffers for this device.  */
-  for (int i = 0; i < metal_devices[ord].num_buffers; i++)
+  if (metal_devices[ord].buffers)
     {
-      if (metal_devices[ord].buffers[i].buffer)
+      for (auto &entry : *metal_devices[ord].buffers)
 	{
-	  metal_devices[ord].buffers[i].buffer->release ();
-	  metal_devices[ord].buffers[i].buffer = nullptr;
-	  metal_devices[ord].buffers[i].ptr = nullptr;
+	  if (entry.second)
+	    entry.second->release ();
 	}
+      delete metal_devices[ord].buffers;
+      metal_devices[ord].buffers = nullptr;
     }
-  metal_devices[ord].num_buffers = 0;
 
   if (metal_devices[ord].queue)
     {
