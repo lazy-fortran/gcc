@@ -122,7 +122,7 @@ struct metal_device
   bool initialized;
 
   /* Buffer allocation tracking with dynamic hash table.  */
-  std::unordered_map<void*, MTL::Buffer*> *buffers;
+  std::unordered_map<uintptr_t, MTL::Buffer*> *buffers;
   pthread_mutex_t buffer_lock;		/* Protects buffers table.  */
 
   /* Loaded images tracking.  */
@@ -200,7 +200,7 @@ metal_enumerate_devices (void)
       metal_devices[num_metal_devices].queue = nullptr;
       metal_devices[num_metal_devices].initialized = false;
       metal_devices[num_metal_devices].buffers
-	= new std::unordered_map<void*, MTL::Buffer*>();
+	= new std::unordered_map<uintptr_t, MTL::Buffer*>();
       pthread_mutex_init (&metal_devices[num_metal_devices].buffer_lock,
 			  nullptr);
       metal_devices[num_metal_devices].images = nullptr;
@@ -227,10 +227,10 @@ metal_enumerate_devices (void)
 /* Add a buffer to the device's tracking table.  Returns true on success.
    Caller must hold metal_devices[ord].buffer_lock.  */
 static bool
-metal_add_buffer (int ord, void *ptr, MTL::Buffer *buffer)
+metal_add_buffer (int ord, uintptr_t devptr, MTL::Buffer *buffer)
 {
   struct metal_device *dev = &metal_devices[ord];
-  (*dev->buffers)[ptr] = buffer;
+  (*dev->buffers)[devptr] = buffer;
   return true;
 }
 
@@ -241,7 +241,8 @@ static MTL::Buffer *
 metal_remove_buffer (int ord, void *ptr)
 {
   struct metal_device *dev = &metal_devices[ord];
-  auto it = dev->buffers->find (ptr);
+  uintptr_t addr = reinterpret_cast<uintptr_t> (ptr);
+  auto it = dev->buffers->find (addr);
   if (it != dev->buffers->end ())
     {
       MTL::Buffer *buffer = it->second;
@@ -262,12 +263,53 @@ metal_find_buffer (int ord, const void *ptr)
 
   for (auto &entry : *dev->buffers)
     {
-      uintptr_t buf_start = reinterpret_cast<uintptr_t>(entry.first);
+      uintptr_t buf_start = entry.first;
       uintptr_t buf_end = buf_start + entry.second->length ();
       if (addr >= buf_start && addr < buf_end)
 	return entry.second;
     }
   return nullptr;
+}
+
+/* Translate a device pointer (Metal GPU address) to a host-accessible pointer
+   into the same MTL::Buffer, validating bounds.
+
+   Caller must hold metal_devices[ord].buffer_lock.  */
+static bool
+metal_translate_device_ptr (int ord, const void *ptr, size_t n,
+			    const char *direction, void **host_ptr_out)
+{
+  MTL::Buffer *buffer = metal_find_buffer (ord, ptr);
+  if (!buffer)
+    {
+      GOMP_PLUGIN_error ("%s: device pointer %p is not a registered Metal buffer",
+			 direction, ptr);
+      return false;
+    }
+
+  uintptr_t buf_start = static_cast<uintptr_t> (buffer->gpuAddress ());
+  size_t buf_len = buffer->length ();
+  uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+
+  if (addr < buf_start)
+    {
+      GOMP_PLUGIN_error ("%s: device pointer %p underflows buffer range",
+			 direction, ptr);
+      return false;
+    }
+
+  /* Calculate offset within buffer and check bounds without overflow.  */
+  size_t offset = addr - buf_start;
+  if (n > buf_len - offset)
+    {
+      GOMP_PLUGIN_error ("%s: transfer of %zu bytes at %p exceeds buffer bounds "
+			 "(buffer size %zu, offset %zu)", direction, n, ptr,
+			 buf_len, offset);
+      return false;
+    }
+
+  *host_ptr_out = static_cast<char *> (buffer->contents ()) + offset;
+  return true;
 }
 
 /* Validate that a device pointer with the given size fits within a registered
@@ -281,21 +323,27 @@ metal_validate_device_ptr (int ord, const void *ptr, size_t n,
   if (!buffer)
     {
       GOMP_PLUGIN_error ("%s: device pointer %p is not a registered Metal buffer",
-			 direction, ptr);
+				 direction, ptr);
       return false;
     }
 
-  uintptr_t buf_start = reinterpret_cast<uintptr_t>(buffer->contents ());
+  uintptr_t buf_start = static_cast<uintptr_t> (buffer->gpuAddress ());
   size_t buf_len = buffer->length ();
   uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
 
   /* Calculate offset within buffer and check bounds without overflow.  */
+  if (addr < buf_start)
+    {
+      GOMP_PLUGIN_error ("%s: device pointer %p underflows buffer range",
+			 direction, ptr);
+      return false;
+    }
   size_t offset = addr - buf_start;
   if (n > buf_len - offset)
     {
       GOMP_PLUGIN_error ("%s: transfer of %zu bytes at %p exceeds buffer bounds "
-			 "(buffer size %zu, offset %zu)", direction, n, ptr,
-			 buf_len, offset);
+				 "(buffer size %zu, offset %zu)", direction, n, ptr,
+				 buf_len, offset);
       return false;
     }
 
@@ -773,26 +821,27 @@ GOMP_OFFLOAD_alloc (int ord, size_t size)
   /* Use shared storage mode for unified memory on Apple Silicon.
      This means both CPU and GPU can access the same memory directly.  */
   MTL::Buffer *buffer = device->newBuffer (size,
-					   MTL::ResourceStorageModeShared);
+						   MTL::ResourceStorageModeShared);
   if (!buffer)
     return nullptr;
 
-  void *ptr = buffer->contents ();
-  if (!ptr)
+  MTL::GPUAddress gpu = buffer->gpuAddress ();
+  if (!gpu)
     {
       buffer->release ();
       return nullptr;
     }
 
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  if (!metal_devices[ord].buffers || !metal_add_buffer (ord, ptr, buffer))
+  uintptr_t devptr = static_cast<uintptr_t> (gpu);
+  if (!metal_devices[ord].buffers || !metal_add_buffer (ord, devptr, buffer))
     {
       pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
       buffer->release ();
       return nullptr;
     }
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
-  return ptr;
+  return reinterpret_cast<void *> (devptr);
 }
 
 bool
@@ -864,9 +913,10 @@ GOMP_OFFLOAD_dev2host (int ord, void *dst, const void *src, size_t n)
 
   /* Validate source is within a registered Metal buffer.  */
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, src, n, "dev2host");
+  void *src_host = nullptr;
+  bool ok = metal_translate_device_ptr (ord, src, n, "dev2host", &src_host);
   if (ok)
-    std::memcpy (dst, src, n);
+    std::memcpy (dst, src_host, n);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* With shared storage mode on Apple Silicon, device memory is directly
@@ -905,9 +955,10 @@ GOMP_OFFLOAD_host2dev (int ord, void *dst, const void *src, size_t n)
 
   /* Validate destination is within a registered Metal buffer.  */
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, dst, n, "host2dev");
+  void *dst_host = nullptr;
+  bool ok = metal_translate_device_ptr (ord, dst, n, "host2dev", &dst_host);
   if (ok)
-    std::memcpy (dst, src, n);
+    std::memcpy (dst_host, src, n);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* With shared storage mode on Apple Silicon, device memory is directly
@@ -946,11 +997,13 @@ GOMP_OFFLOAD_dev2dev (int ord, void *dst, const void *src, size_t n)
 
   /* Validate both source and destination are within registered Metal buffers.  */
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, src, n, "dev2dev source");
+  void *src_host = nullptr;
+  void *dst_host = nullptr;
+  bool ok = metal_translate_device_ptr (ord, src, n, "dev2dev source", &src_host);
   if (ok)
-    ok = metal_validate_device_ptr (ord, dst, n, "dev2dev destination");
+    ok = metal_translate_device_ptr (ord, dst, n, "dev2dev destination", &dst_host);
   if (ok)
-    std::memmove (dst, src, n);
+    std::memmove (dst_host, src_host, n);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* Use memmove for device-to-device copies to handle overlapping regions
@@ -987,9 +1040,10 @@ GOMP_OFFLOAD_memset (int ord, void *ptr, int val, size_t count)
     }
 
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, ptr, count, "memset");
+  void *host_ptr = nullptr;
+  bool ok = metal_translate_device_ptr (ord, ptr, count, "memset", &host_ptr);
   if (ok)
-    std::memset (ptr, val, count);
+    std::memset (host_ptr, val, count);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
 
   /* With shared storage mode, device memory is directly accessible.
@@ -1025,6 +1079,10 @@ GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
 
   /* Both host-to-host is not our concern.  */
   if (dst_ord == -1 && src_ord == -1)
+    return -1;
+
+  /* Cross-device copies are not implemented.  */
+  if (dst_ord != -1 && src_ord != -1 && dst_ord != src_ord)
     return -1;
 
   metal_enumerate_devices ();
@@ -1076,10 +1134,36 @@ GOMP_OFFLOAD_memcpy2d (int dst_ord, int src_ord, size_t dim1_size,
       return 0;
     }
 
+  /* Validate/translate device pointers to host-accessible pointers.  */
+  void *dst_host_base = dst;
+  const void *src_host_base = src;
+  if (dst_ord != -1)
+    {
+      void *tmp = nullptr;
+      if (!metal_translate_device_ptr (ord, dst, dst_row_off, "memcpy2d destination",
+				       &tmp))
+	{
+	  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+	  return 0;
+	}
+      dst_host_base = tmp;
+    }
+  if (src_ord != -1)
+    {
+      void *tmp = nullptr;
+      if (!metal_translate_device_ptr (ord, src, src_row_off, "memcpy2d source",
+				       &tmp))
+	{
+	  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+	  return 0;
+	}
+      src_host_base = tmp;
+    }
+
   /* With shared storage mode, both host and device memory are directly
      accessible.  Perform row-by-row copy with appropriate strides.  */
-  char *d = static_cast<char *>(dst);
-  const char *s = static_cast<const char *>(src);
+  char *d = static_cast<char *>(dst_host_base);
+  const char *s = static_cast<const char *>(src_host_base);
 
   for (size_t row = 0; row < dim0_len; row++)
     {
@@ -1130,6 +1214,10 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
 
   /* Both host-to-host is not our concern.  */
   if (dst_ord == -1 && src_ord == -1)
+    return -1;
+
+  /* Cross-device copies are not implemented.  */
+  if (dst_ord != -1 && src_ord != -1 && dst_ord != src_ord)
     return -1;
 
   metal_enumerate_devices ();
@@ -1204,10 +1292,36 @@ GOMP_OFFLOAD_memcpy3d (int dst_ord, int src_ord, size_t dim2_size,
       return 0;
     }
 
+  /* Validate/translate device pointers to host-accessible pointers.  */
+  void *dst_host_base = dst;
+  const void *src_host_base = src;
+  if (dst_ord != -1)
+    {
+      void *tmp = nullptr;
+      if (!metal_translate_device_ptr (ord, dst, dst_off, "memcpy3d destination",
+				       &tmp))
+	{
+	  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+	  return 0;
+	}
+      dst_host_base = tmp;
+    }
+  if (src_ord != -1)
+    {
+      void *tmp = nullptr;
+      if (!metal_translate_device_ptr (ord, src, src_off, "memcpy3d source",
+				       &tmp))
+	{
+	  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+	  return 0;
+	}
+      src_host_base = tmp;
+    }
+
   /* With shared storage mode, both host and device memory are directly
      accessible.  Perform slice-by-slice, row-by-row copy.  */
-  char *d = static_cast<char *>(dst);
-  const char *s = static_cast<const char *>(src);
+  char *d = static_cast<char *>(dst_host_base);
+  const char *s = static_cast<const char *>(src_host_base);
 
   for (size_t slice = 0; slice < dim0_len; slice++)
     {
@@ -1264,7 +1378,7 @@ metal_bind_kernel_arguments (MTL::ComputeCommandEncoder *enc, int ord,
     }
 
   /* Calculate offset within buffer.  */
-  uintptr_t buf_start = reinterpret_cast<uintptr_t>(args_buffer->contents ());
+  uintptr_t buf_start = static_cast<uintptr_t> (args_buffer->gpuAddress ());
   uintptr_t addr = reinterpret_cast<uintptr_t>(dp);
   size_t offset = addr - buf_start;
 
@@ -1457,8 +1571,28 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *),
 {
   struct metal_fn_descriptor *fn_desc = (struct metal_fn_descriptor *) fn;
 
-  /* devaddrs points to device memory containing kernel arguments.  */
-  void *dp = devaddrs ? *devaddrs : nullptr;
+  /* For OpenACC, the kernel argument is a pointer to the device-side devaddrs
+     array itself (matching the NVPTX plugin).  */
+  void *dp = (void *) devaddrs;
+
+  const char *gomp_debug = getenv ("GOMP_DEBUG");
+  if (gomp_debug && gomp_debug[0] && strcmp (gomp_debug, "0") != 0)
+    {
+      pthread_mutex_lock (&metal_devices[0].buffer_lock);
+      void *dp_host = nullptr;
+      void *first = nullptr;
+      if (dp)
+	{
+	  if (metal_translate_device_ptr (0, dp, sizeof (first),
+					  "openacc_exec debug", &dp_host))
+	    memcpy (&first, dp_host, sizeof (first));
+	}
+      MTL::Buffer *dp_buf = dp ? metal_find_buffer (0, dp) : nullptr;
+      MTL::Buffer *first_buf = first ? metal_find_buffer (0, first) : nullptr;
+      pthread_mutex_unlock (&metal_devices[0].buffer_lock);
+      GOMP_PLUGIN_debug (0, "metal openacc_exec: dp=%p mapnum=%zu first=%p dp_buf=%p first_buf=%p\n",
+			 dp, mapnum, first, (void *) dp_buf, (void *) first_buf);
+    }
 
   /* Execute kernel synchronously on default queue.
      Note: We don't have a device ordinal here, so we assume device 0.
@@ -1486,8 +1620,7 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
 
   struct metal_fn_descriptor *fn_desc = (struct metal_fn_descriptor *) fn;
 
-  /* devaddrs points to device memory containing kernel arguments.  */
-  void *dp = devaddrs ? *devaddrs : nullptr;
+  void *dp = (void *) devaddrs;
 
   /* Execute on async queue and track command buffer for synchronization.
      Signal is called inside metal_exec before commit.
@@ -1817,9 +1950,10 @@ GOMP_OFFLOAD_openacc_async_host2dev (int ord, void *dst, const void *src,
 
   /* Validate destination and perform copy under lock to prevent concurrent free.  */
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, dst, n, "async_host2dev");
+  void *dst_host = nullptr;
+  bool ok = metal_translate_device_ptr (ord, dst, n, "async_host2dev", &dst_host);
   if (ok)
-    std::memcpy (dst, src, n);
+    std::memcpy (dst_host, src, n);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   return ok;
 }
@@ -1858,9 +1992,10 @@ GOMP_OFFLOAD_openacc_async_dev2host (int ord, void *dst, const void *src,
 
   /* Validate source and perform copy under lock to prevent concurrent free.  */
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, src, n, "async_dev2host");
+  void *src_host = nullptr;
+  bool ok = metal_translate_device_ptr (ord, src, n, "async_dev2host", &src_host);
   if (ok)
-    std::memcpy (dst, src, n);
+    std::memcpy (dst, src_host, n);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   return ok;
 }
@@ -1899,11 +2034,13 @@ GOMP_OFFLOAD_openacc_async_dev2dev (int ord, void *dst, const void *src,
 
   /* Validate both pointers and perform copy under lock to prevent concurrent free.  */
   pthread_mutex_lock (&metal_devices[ord].buffer_lock);
-  bool ok = metal_validate_device_ptr (ord, src, n, "async_dev2dev source");
+  void *src_host = nullptr;
+  void *dst_host = nullptr;
+  bool ok = metal_translate_device_ptr (ord, src, n, "async_dev2dev source", &src_host);
   if (ok)
-    ok = metal_validate_device_ptr (ord, dst, n, "async_dev2dev destination");
+    ok = metal_translate_device_ptr (ord, dst, n, "async_dev2dev destination", &dst_host);
   if (ok)
-    std::memmove (dst, src, n);
+    std::memmove (dst_host, src_host, n);
   pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
   return ok;
 }

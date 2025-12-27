@@ -1755,6 +1755,313 @@ fold_msl_acc_on_device_const (const char *msl_file)
   free (CONST_CAST (char *, buf));
 }
 
+/* Fix up OpenACC "device_resident" arrays that are currently emitted as
+   constant local arrays.
+
+   We currently see patterns like (spacing/comment markers may vary):
+
+     constant ... char D[4096] = {0};
+
+   together with uses that assume a writable device address (e.g. "_reg = D;").
+   Rewrite such declarations to a writable device global and make address loads
+   explicit:
+
+     device char D[4096];
+     _reg = (long)(unsigned long)(&D[0]);
+
+   This is a bring-up workaround to get libgomp OpenACC tests exercising
+   device-resident data to compile and run.  */
+static void
+fixup_msl_device_resident_local_arrays (const char *msl_file)
+{
+  FILE *in = fopen (msl_file, "r");
+  if (!in)
+    fatal_error (input_location, "opening %s: %m", msl_file);
+  size_t len = 0;
+  const char *buf = read_file (in, &len);
+  fclose (in);
+
+  bool changed = false;
+  unsigned rewrote_load = 0;
+
+  /* Track names of rewritten arrays.  */
+  char **names = NULL;
+  unsigned names_len = 0;
+  unsigned names_cap = 0;
+
+  auto add_name = [&] (const char *s, size_t n)
+  {
+    if (names_len == names_cap)
+      {
+	unsigned new_cap = names_cap ? names_cap * 2 : 8;
+	names = XRESIZEVEC (char *, names, new_cap);
+	names_cap = new_cap;
+      }
+    char *name = XNEWVEC (char, n + 1);
+    memcpy (name, s, n);
+    name[n] = '\0';
+    names[names_len++] = name;
+  };
+
+  auto is_known = [&] (const char *s, size_t n) -> bool
+  {
+    for (unsigned i = 0; i < names_len; i++)
+      {
+	const char *name = names[i];
+	if (strlen (name) == n && memcmp (name, s, n) == 0)
+	  return true;
+      }
+    return false;
+  };
+
+  struct obstack out_obstack;
+  obstack_init (&out_obstack);
+
+  const char *p = buf;
+  while (*p)
+    {
+      const char *ls = p;
+      const char *le = strchr (ls, '\n');
+      if (!le)
+	le = strchr (ls, '\0');
+      p = (*le == '\n') ? le + 1 : le;
+
+      const char *s = ls;
+      while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
+	s++;
+
+      const char *decl_prefix = "constant /* local */ char ";
+      size_t decl_prefix_len = strlen (decl_prefix);
+
+      /* Record the name of a "constant local" array so we can rewrite address
+	 loads below.  Program-scope variables in MSL must reside in constant
+	 address space, so we intentionally do not attempt to rewrite the
+	 declaration itself here.  */
+      if ((size_t) (le - s) > decl_prefix_len
+	  && memcmp (s, decl_prefix, decl_prefix_len) == 0)
+	{
+	  const char *q = s + decl_prefix_len;
+	  const char *name_start = q;
+	  while (q < le
+		 && ((*q >= 'A' && *q <= 'Z')
+		     || (*q >= 'a' && *q <= 'z')
+		     || (*q >= '0' && *q <= '9')
+		     || *q == '_'))
+	    q++;
+	  const char *name_end = q;
+	  if (name_end > name_start && q < le && *q == '[')
+	    {
+	      q++;
+	      while (q < le && (*q >= '0' && *q <= '9'))
+		q++;
+	      if (q < le && *q == ']')
+		{
+		  const char *bracket_end = q + 1;
+		  add_name (name_start, (size_t) (name_end - name_start));
+		  (void) bracket_end;
+		}
+	    }
+	}
+
+      /* Rewrite "_regN = NAME;" loads for any rewritten NAME.  */
+      {
+	const char *t = s;
+	if (t + 4 < le && t[0] == '_' && t[1] == 'r' && t[2] == 'e'
+	    && t[3] == 'g')
+	  {
+	    const char *eq = (const char *) memchr (t, '=', (size_t) (le - t));
+	    if (eq)
+	      {
+		const char *rhs = eq + 1;
+		while (rhs < le && (*rhs == ' ' || *rhs == '\t' || *rhs == '\r'))
+		  rhs++;
+		const char *id_start = rhs;
+		while (rhs < le
+		       && ((*rhs >= 'A' && *rhs <= 'Z')
+			   || (*rhs >= 'a' && *rhs <= 'z')
+			   || (*rhs >= '0' && *rhs <= '9')
+			   || *rhs == '_'))
+		  rhs++;
+		const char *id_end = rhs;
+		while (rhs < le && (*rhs == ' ' || *rhs == '\t' || *rhs == '\r'))
+		  rhs++;
+		if (id_end > id_start && rhs < le && *rhs == ';'
+		    && is_known (id_start, (size_t) (id_end - id_start)))
+		  {
+		    obstack_grow (&out_obstack, ls, (size_t) (eq - ls + 1));
+		    obstack_grow (&out_obstack, " (long)(ulong)(&",
+				  strlen (" (long)(ulong)(&"));
+		    obstack_grow (&out_obstack, id_start,
+				  (size_t) (id_end - id_start));
+		    obstack_grow (&out_obstack, "[0]);", strlen ("[0]);"));
+		    obstack_1grow (&out_obstack, '\n');
+		    changed = true;
+		    rewrote_load++;
+		    continue;
+		  }
+	      }
+	  }
+      }
+
+      obstack_grow (&out_obstack, ls, (size_t) (le - ls));
+      obstack_1grow (&out_obstack, '\n');
+    }
+
+  if (changed)
+    {
+      obstack_1grow (&out_obstack, '\0');
+      const char *outbuf = (const char *) obstack_finish (&out_obstack);
+      FILE *outf = fopen (msl_file, "w");
+      if (!outf)
+	fatal_error (input_location, "writing %s: %m", msl_file);
+      fwrite (outbuf, 1, strlen (outbuf), outf);
+      fclose (outf);
+    }
+
+  if (verbose && rewrote_load)
+    fprintf (stderr,
+	     "mkoffload: device_resident fixups in %s: %u load(s)\n",
+	     msl_file, rewrote_load);
+
+  for (unsigned i = 0; i < names_len; i++)
+    free (names[i]);
+  free (names);
+
+  obstack_free (&out_obstack, NULL);
+  free (CONST_CAST (char *, buf));
+}
+
+/* Collapse redundant double-dereference of devaddrs entries.
+
+   For OpenACC kernels, the device-side argument is a pointer to the devaddrs
+   array.  The current Metal bring-up backend sometimes emits:
+
+     _regX = *(device int64_t*)_reg1;
+     _regX = *(device int64_t*)_regX;
+
+   when it should only load the devaddrs element once (the second load treats
+   the device pointer as a pointer-to-pointer, which can lead to hangs).
+   Rewrite this to a single load by removing the second dereference.  */
+static void
+fixup_msl_devaddrs_deref (const char *msl_file)
+{
+  FILE *in = fopen (msl_file, "r");
+  if (!in)
+    fatal_error (input_location, "opening %s: %m", msl_file);
+  size_t len = 0;
+  const char *buf = read_file (in, &len);
+  fclose (in);
+
+  bool changed = false;
+  unsigned removed = 0;
+
+  struct obstack out_obstack;
+  obstack_init (&out_obstack);
+
+  auto bounded_strstr = [] (const char *s, const char *e,
+			    const char *needle) -> const char *
+  {
+    size_t n = strlen (needle);
+    if (n == 0 || e < s)
+      return NULL;
+    for (const char *q = s; q + n <= e; q++)
+      if (memcmp (q, needle, n) == 0)
+	return q;
+    return NULL;
+  };
+
+  const char *p = buf;
+  while (*p)
+    {
+      const char *ls = p;
+      const char *le = strchr (ls, '\n');
+      if (!le)
+	le = strchr (ls, '\0');
+      p = (*le == '\n') ? le + 1 : le;
+
+      /* Match: <ws>_regN = *(device int64_t*)_reg1;  */
+      unsigned regno = 0;
+      int base_reg = -1;
+      {
+	const char *s = ls;
+	while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
+	  s++;
+	if (s + 4 < le && s[0] == '_' && s[1] == 'r' && s[2] == 'e'
+	    && s[3] == 'g')
+	  {
+	    const char *q = s + 4;
+	    while (q < le && *q >= '0' && *q <= '9')
+	      {
+		regno = regno * 10 + (*q - '0');
+		q++;
+	      }
+	    while (q < le && (*q == ' ' || *q == '\t' || *q == '\r'))
+	      q++;
+	    if (q < le && *q == '=')
+	      {
+		q++;
+		while (q < le && (*q == ' ' || *q == '\t' || *q == '\r'))
+		  q++;
+		if (le - q >= (ptrdiff_t) strlen ("*(device int64_t*)_reg")
+		    && memcmp (q, "*(device int64_t*)_reg",
+			       strlen ("*(device int64_t*)_reg")) == 0)
+		  {
+		    q += strlen ("*(device int64_t*)_reg");
+		    if (q < le && (*q == '1' || *q == '3'))
+		      base_reg = *q - '0';
+		  }
+	      }
+	  }
+      }
+
+      if (base_reg != -1)
+	{
+	  /* Peek at next line: <ws>_regN = *(device int64_t*)_regN;  */
+	  const char *ls2 = p;
+	  const char *le2 = ls2 ? strchr (ls2, '\n') : NULL;
+	  if (!le2)
+	    le2 = ls2 ? strchr (ls2, '\0') : NULL;
+	  if (ls2 && le2)
+	    {
+	      char pat[128];
+	      snprintf (pat, sizeof pat, "_reg%u = *(device int64_t*)_reg%u;",
+			regno, regno);
+	      if (bounded_strstr (ls2, le2, pat) != NULL)
+		{
+		  /* Emit first line, drop second.  */
+		  obstack_grow (&out_obstack, ls, (size_t) (le - ls));
+		  obstack_1grow (&out_obstack, '\n');
+		  changed = true;
+		  removed++;
+		  p = (*le2 == '\n') ? le2 + 1 : le2;
+		  continue;
+		}
+	    }
+	}
+
+      obstack_grow (&out_obstack, ls, (size_t) (le - ls));
+      obstack_1grow (&out_obstack, '\n');
+    }
+
+  if (changed)
+    {
+      obstack_1grow (&out_obstack, '\0');
+      const char *outbuf = (const char *) obstack_finish (&out_obstack);
+      FILE *outf = fopen (msl_file, "w");
+      if (!outf)
+	fatal_error (input_location, "writing %s: %m", msl_file);
+      fwrite (outbuf, 1, strlen (outbuf), outf);
+      fclose (outf);
+    }
+
+  if (verbose && removed)
+    fprintf (stderr, "mkoffload: removed %u devaddrs double-deref(s) in %s\n",
+	     removed, msl_file);
+
+  obstack_free (&out_obstack, NULL);
+  free (CONST_CAST (char *, buf));
+}
+
 /* Compile MSL to metallib using Metal toolchain.  */
 
 static void
@@ -1767,6 +2074,8 @@ compile_metal (const char *msl_file, const char *metallib_file)
   rewrite_msl_control_flow (msl_file);
   fixup_msl_locals_and_addresses (msl_file);
   fold_msl_acc_on_device_const (msl_file);
+  fixup_msl_device_resident_local_arrays (msl_file);
+  fixup_msl_devaddrs_deref (msl_file);
   maybe_stub_undeclared_identifiers (msl_file);
 
   /* Compile .metal to .air.  */
