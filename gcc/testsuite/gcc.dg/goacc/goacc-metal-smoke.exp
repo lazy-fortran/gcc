@@ -33,10 +33,12 @@ if ![check_effective_target_fopenacc] {
 dg-init
 
 set common_dir "$srcdir/c-c++-common/goacc"
+set dg_dir "$srcdir/gcc.dg/goacc"
 set all_tests [lsort [find $common_dir *.c]]
+set dg_tests [lsort [find $dg_dir *.c]]
 set tests {}
 
-foreach t $all_tests {
+foreach t [concat $all_tests $dg_tests] {
   set f [open $t r]
   set c [read $f]
   close $f
@@ -62,6 +64,11 @@ foreach t $all_tests {
     continue
   }
   if {[regexp {TODO} $c]} {
+    continue
+  }
+
+  # This smoke is for the C frontend.
+  if {![regexp {#pragma[ \t]+acc[ \t]} $c]} {
     continue
   }
 
