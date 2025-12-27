@@ -1938,6 +1938,52 @@
   "%0 = 0; abort();"
   [(set_attr "type" "call")])
 
+;; OpenACC: acc_on_device
+;;
+;; The Metal backend does not yet implement a working device-side calling
+;; convention for normal functions (arguments are currently passed in memory
+;; and calls are emitted without explicit argument lists in MSL output).
+;;
+;; OpenACC's testsuite can force a runtime call to acc_on_device via
+;; -fno-builtin-acc_on_device.  When the argument is a constant, we can fold
+;; this call late (RTL peephole) and avoid emitting a broken call entirely.
+
+(define_peephole2
+  [(set (mem:SI (reg:DI 1))
+	(match_operand:SI 0 "const_int_operand" ""))
+   (set (match_operand:SI 1 "metal_register_operand" "")
+	(call (match_operand:QI 2 "metal_direct_call_operand" "")
+	      (match_operand 3 "" "")))]
+  "SYMBOL_REF_P (XEXP (operands[2], 0)) && strcmp (XSTR (XEXP (operands[2], 0), 0), \"acc_on_device\") == 0 && (INTVAL (operands[0]) == 1 || INTVAL (operands[0]) == 4 || INTVAL (operands[0]) == 9)"
+  [(set (match_dup 1) (const_int 1))])
+
+(define_peephole2
+  [(set (mem:SI (reg:DI 1))
+	(match_operand:SI 0 "const_int_operand" ""))
+   (set (match_operand:SI 1 "metal_register_operand" "")
+	(call (match_operand:QI 2 "metal_direct_call_operand" "")
+	      (match_operand 3 "" "")))]
+  "SYMBOL_REF_P (XEXP (operands[2], 0)) && strcmp (XSTR (XEXP (operands[2], 0), 0), \"acc_on_device\") == 0 && !(INTVAL (operands[0]) == 1 || INTVAL (operands[0]) == 4 || INTVAL (operands[0]) == 9)"
+  [(set (match_dup 1) (const_int 0))])
+
+(define_peephole2
+  [(set (mem:SI (plus:DI (reg:DI 1) (const_int 0)))
+	(match_operand:SI 0 "const_int_operand" ""))
+   (set (match_operand:SI 1 "metal_register_operand" "")
+	(call (match_operand:QI 2 "metal_direct_call_operand" "")
+	      (match_operand 3 "" "")))]
+  "SYMBOL_REF_P (XEXP (operands[2], 0)) && strcmp (XSTR (XEXP (operands[2], 0), 0), \"acc_on_device\") == 0 && (INTVAL (operands[0]) == 1 || INTVAL (operands[0]) == 4 || INTVAL (operands[0]) == 9)"
+  [(set (match_dup 1) (const_int 1))])
+
+(define_peephole2
+  [(set (mem:SI (plus:DI (reg:DI 1) (const_int 0)))
+	(match_operand:SI 0 "const_int_operand" ""))
+   (set (match_operand:SI 1 "metal_register_operand" "")
+	(call (match_operand:QI 2 "metal_direct_call_operand" "")
+	      (match_operand 3 "" "")))]
+  "SYMBOL_REF_P (XEXP (operands[2], 0)) && strcmp (XSTR (XEXP (operands[2], 0), 0), \"acc_on_device\") == 0 && !(INTVAL (operands[0]) == 1 || INTVAL (operands[0]) == 4 || INTVAL (operands[0]) == 9)"
+  [(set (match_dup 1) (const_int 0))])
+
 ;; Type conversions
 
 ;; QI (8-bit) <-> HI (16-bit)

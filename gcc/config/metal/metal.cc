@@ -778,7 +778,7 @@ metal_write_kernel_params_unpacked (FILE *file, tree fntype, tree decl)
   /* Emit single pointer parameter for packed arguments.
      The GOMP runtime packs all arguments (pointers and scalars) into
      device memory and passes a pointer to this memory region.  */
-  fprintf (file, "constant void* _args_ptr [[buffer(0)]],\n");
+  fprintf (file, "device char* _args_ptr [[buffer(0)]],\n");
   fprintf (file, "    uint3 tid [[thread_position_in_grid]],\n");
   fprintf (file, "    uint3 tgid [[threadgroup_position_in_grid]]");
 }
@@ -816,6 +816,19 @@ metal_declare_function_name (FILE *file, const char *name, tree decl)
 
   /* Emit declarations for all pseudo-registers used in this function.  */
   metal_emit_register_declarations (file);
+
+  /* Initialize the argument/stack base register for kernels.
+
+     Metal kernels receive a single pointer to the packed arguments buffer as
+     the first formal parameter (buffer(0)).  The current backend lowers kernel
+     argument accesses via a hard register base (currently printed as _reg1).
+     Make sure it is initialized from the kernel parameter so generated code
+     does not dereference an uninitialized pointer.  */
+  if (is_kernel)
+    {
+      fprintf (file, "  _reg%d = (long)_args_ptr;\n", STACK_POINTER_REGNUM);
+      fprintf (file, "  _reg%d = (long)_args_ptr;\n", ARG_POINTER_REGNUM);
+    }
 }
 
 /* Terminate a function by writing a closing brace to FILE.

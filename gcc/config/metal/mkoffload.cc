@@ -1597,6 +1597,164 @@ fixup_msl_locals_and_addresses (const char *msl_file)
   free (CONST_CAST (char *, buf));
 }
 
+/* Fold constant acc_on_device calls in the lowered MSL.
+
+   The Metal backend currently emits calls without explicit argument lists and
+   passes arguments via a synthetic memory slot.  In OpenACC tests (notably
+   those using -fno-builtin-acc_on_device), this results in a call to
+   acc_on_device() with the argument stored to *(device int*)_reg1 just before
+   the call, which is both non-standalone (no declaration for acc_on_device) and
+   can clobber the kernel argument pointer that also lives at _reg1.
+
+   As a bring-up workaround, when the argument is constant, rewrite the
+   store+call sequence into a single constant assignment, and remove the store.
+   This keeps compilation moving and matches the expected OpenACC semantics.  */
+static void
+fold_msl_acc_on_device_const (const char *msl_file)
+{
+  FILE *in = fopen (msl_file, "r");
+  if (!in)
+    fatal_error (input_location, "opening %s: %m", msl_file);
+  size_t len = 0;
+  const char *buf = read_file (in, &len);
+  fclose (in);
+
+  bool changed = false;
+  unsigned folded_count = 0;
+  struct obstack out_obstack;
+  obstack_init (&out_obstack);
+
+  const char *p = buf;
+  while (*p)
+    {
+      const char *ls = p;
+      const char *le = strchr (ls, '\n');
+      if (!le)
+	le = strchr (ls, '\0');
+      p = (*le == '\n') ? le + 1 : le;
+
+      auto bounded_strstr = [] (const char *s, const char *e,
+				const char *needle) -> const char *
+      {
+	size_t n = strlen (needle);
+	if (n == 0 || e < s)
+	  return NULL;
+	for (const char *q = s; q + n <= e; q++)
+	  if (memcmp (q, needle, n) == 0)
+	    return q;
+	return NULL;
+      };
+
+      auto parse_store_const = [&] (long *out_val) -> bool
+      {
+	/* Match: *(device int*)_reg1 = N;  (allow optional leading comment).  */
+	const char *s = ls;
+	const char *e = le;
+
+	while (s < e && (*s == ' ' || *s == '\t' || *s == '\r'))
+	  s++;
+	if (s + 1 < e && s[0] == '/' && s[1] == '*')
+	  {
+	    const char *endc = bounded_strstr (s, e, "*/");
+	    if (!endc)
+	      return false;
+	    s = endc + 2;
+	    while (s < e && (*s == ' ' || *s == '\t' || *s == '\r'))
+	      s++;
+	  }
+
+	if (bounded_strstr (s, e, "*(device int*)_reg1") == NULL
+	    && bounded_strstr (s, e, "*(device int*)(_reg1 + 0)") == NULL)
+	  return false;
+
+	const char *eq = (const char *) memchr (s, '=', (size_t) (e - s));
+	if (!eq)
+	  return false;
+	const char *r = eq + 1;
+	while (r < e && (*r == ' ' || *r == '\t' || *r == '\r'))
+	  r++;
+
+	bool neg = false;
+	if (r < e && *r == '-')
+	  {
+	    neg = true;
+	    r++;
+	  }
+	if (r == e || *r < '0' || *r > '9')
+	  return false;
+	long v = 0;
+	while (r < e && *r >= '0' && *r <= '9')
+	  {
+	    v = v * 10 + (*r - '0');
+	    r++;
+	  }
+	if (neg)
+	  v = -v;
+	if (out_val)
+	  *out_val = v;
+	return true;
+      };
+
+      long stored = 0;
+      if (parse_store_const (&stored))
+	{
+	  /* Peek at the following line.  */
+	  const char *ls2 = p;
+	  const char *le2 = ls2 ? strchr (ls2, '\n') : NULL;
+	  if (!le2)
+	    le2 = ls2 ? strchr (ls2, '\0') : NULL;
+
+	  if (ls2 && le2)
+	    {
+	      if (bounded_strstr (ls2, le2, "= acc_on_device();") != NULL)
+		{
+		  /* Determine the folded value.  */
+		  int folded = (stored == 1 || stored == 4 || stored == 9) ? 1 : 0;
+
+		  /* Emit: <lhs> = <folded>;  */
+		  const char *eq
+		    = (const char *) memchr (ls2, '=', (size_t) (le2 - ls2));
+		  if (eq)
+		    {
+		      obstack_grow (&out_obstack, ls2, (size_t) ((eq + 1) - ls2));
+		      char num[32];
+		      snprintf (num, sizeof num, " %d;", folded);
+		      obstack_grow (&out_obstack, num, strlen (num));
+		      obstack_1grow (&out_obstack, '\n');
+		      changed = true;
+		      folded_count++;
+
+		      /* Skip the call line.  */
+		      p = (*le2 == '\n') ? le2 + 1 : le2;
+		      continue;
+		    }
+		}
+	    }
+	}
+
+      obstack_grow (&out_obstack, ls, (size_t) (le - ls));
+      obstack_1grow (&out_obstack, '\n');
+    }
+
+  if (changed)
+    {
+      obstack_1grow (&out_obstack, '\0');
+      const char *outbuf = (const char *) obstack_finish (&out_obstack);
+      FILE *outf = fopen (msl_file, "w");
+      if (!outf)
+	fatal_error (input_location, "writing %s: %m", msl_file);
+      fwrite (outbuf, 1, strlen (outbuf), outf);
+      fclose (outf);
+    }
+
+  if (verbose && folded_count)
+    fprintf (stderr, "mkoffload: folded %u acc_on_device call(s) in %s\n",
+	     folded_count, msl_file);
+
+  obstack_free (&out_obstack, NULL);
+  free (CONST_CAST (char *, buf));
+}
+
 /* Compile MSL to metallib using Metal toolchain.  */
 
 static void
@@ -1608,6 +1766,7 @@ compile_metal (const char *msl_file, const char *metallib_file)
   /* Rewrite labels/goto into switch-based control flow.  */
   rewrite_msl_control_flow (msl_file);
   fixup_msl_locals_and_addresses (msl_file);
+  fold_msl_acc_on_device_const (msl_file);
   maybe_stub_undeclared_identifiers (msl_file);
 
   /* Compile .metal to .air.  */
@@ -1888,6 +2047,15 @@ main (int argc, char **argv)
      MSL text.  */
   obstack_ptr_grow (&argv_obstack, "-S");
   obstack_ptr_grow (&argv_obstack, "-xlto");
+  /* Force optimization for the device compilation stage.
+
+     The Metal backend currently relies on RTL peepholes for some essential
+     cleanups (e.g. folding constant OpenACC acc_on_device calls that would
+     otherwise require a device-side calling convention we don't yet have).
+
+     Host compilation flags may include -O0; override that here so the device
+     compilation reliably succeeds for tests that use -O0.  */
+  obstack_ptr_grow (&argv_obstack, "-O2");
   switch (offload_abi)
     {
     case OFFLOAD_ABI_LP64:
@@ -1906,6 +2074,9 @@ main (int argc, char **argv)
     {
       if (!strcmp (argv[ix], "-o") && ix + 1 != argc)
 	outname = argv[++ix];
+      else if (startswith (argv[ix], "-O"))
+	/* See comment above: mkoffload forces -O2 for device compilation.  */
+	continue;
       else
 	obstack_ptr_grow (&argv_obstack, argv[ix]);
     }

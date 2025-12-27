@@ -56,6 +56,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <pthread.h>
+#include <unistd.h>
 #include <unordered_map>
 
 /* Maximum number of Metal devices supported.  */
@@ -1384,7 +1385,29 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
     }
   else
     {
-      cmd->waitUntilCompleted ();
+      /* Avoid indefinite hangs in bring-up: poll completion with a timeout so
+	 test runs fail fast and provide diagnostics.  */
+      const int timeout_ms = 30000;
+      const int poll_us = 1000;
+      int waited_ms = 0;
+      while (waited_ms < timeout_ms)
+	{
+	  MTL::CommandBufferStatus st = cmd->status ();
+	  if (st == MTL::CommandBufferStatusCompleted
+	      || st == MTL::CommandBufferStatusError)
+	    break;
+	  usleep (poll_us);
+	  waited_ms += poll_us / 1000;
+	}
+
+      if (cmd->status () != MTL::CommandBufferStatusCompleted
+	  && cmd->status () != MTL::CommandBufferStatusError)
+	{
+	  if (release_exec_queue)
+	    exec_queue->release ();
+	  GOMP_PLUGIN_fatal ("Metal kernel execution timed out (status=%d)",
+			     (int) cmd->status ());
+	}
 
       if (cmd->status () == MTL::CommandBufferStatusError)
 	{
