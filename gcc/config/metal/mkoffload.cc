@@ -61,62 +61,6 @@ struct id_map
 static id_map *func_ids, **funcs_tail = &func_ids;
 static id_map *var_ids, **vars_tail = &var_ids;
 
-/* Return the byte size for a VAR_MAP name by scanning for a comment like:
-     // Local variable: NAME (size=4096, align=32)
-   in the original input stream.  Returns 0 if not found.  */
-static unsigned long
-lookup_var_map_size (const char *input, size_t len, const char *name)
-{
-  if (!input || !name || !name[0])
-    return 0;
-
-  const char *p = input;
-  const char *end = input + len;
-  const char *needle = "// Local variable:";
-  size_t needle_len = strlen (needle);
-
-  while (p < end)
-    {
-      const char *hit = strstr (p, needle);
-      if (!hit)
-	break;
-      p = hit + needle_len;
-
-      while (p < end && (*p == ' ' || *p == '\t'))
-	p++;
-
-      const char *name_start = p;
-      while (p < end && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
-	p++;
-      const char *name_end = p;
-
-      const char *size_tag = "(size=";
-      const char *sz = strstr (p, size_tag);
-      if (!sz || sz >= end)
-	continue;
-      sz += strlen (size_tag);
-
-      unsigned long v = 0;
-      bool any = false;
-      while (sz < end && *sz >= '0' && *sz <= '9')
-	{
-	  any = true;
-	  v = v * 10 + (*sz - '0');
-	  sz++;
-	}
-
-      if (!any)
-	continue;
-
-      size_t want = strlen (name);
-      if ((size_t) (name_end - name_start) == want
-	  && strncmp (name_start, name, want) == 0)
-	return v;
-    }
-
-  return 0;
-}
-
 /* Free id_map linked list.  */
 static void
 free_id_maps (id_map *map)
@@ -309,8 +253,6 @@ static void compile_metal (const char *, const char *);
 static void rewrite_msl_control_flow (const char *);
 static void fixup_msl_locals_and_addresses (const char *);
 static void maybe_stub_undeclared_identifiers (const char *);
-static void inject_msl_var_buffers (const char *);
-static void fixup_msl_reg1_int_slot (const char *);
 
 /* Read the whole input file.  It will be NUL terminated.  */
 
@@ -438,45 +380,36 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 	   "};\n\n");
 
   /* Dump out variable idents.  */
+  unsigned var_count = 0;
+  for (id = var_ids; id; id = id->next)
+    var_count++;
+  fprintf (out, "static const char *const var_mappings[] = {");
   if (!var_ids)
-    {
-      fprintf (out, "static const char *const *const var_mappings = NULL;\n");
-      fprintf (out, "static const uintptr_t *const var_sizes = NULL;\n\n");
-    }
+    fprintf (out, "\n\tNULL");
   else
-    {
-      fprintf (out, "static const char *const var_mappings[] = {");
-      for (comma = "", id = var_ids; id; comma = ",", id = id->next)
-	fprintf (out, "%s\n\t\"%s\"", comma, id->msl_name);
-      fprintf (out, "\n};\n\n");
-
-      fprintf (out, "static const uintptr_t var_sizes[] = {");
-      for (comma = "", id = var_ids; id; comma = ",", id = id->next)
-	{
-	  unsigned long sz = lookup_var_map_size (input, len, id->msl_name);
-	  fprintf (out, "%s\n\t(uintptr_t)%lu", comma, sz);
-	}
-      fprintf (out, "\n};\n\n");
-    }
+    for (comma = "", id = var_ids; id; comma = ",", id = id->next)
+      fprintf (out, "%s\n\t\"%s\"", comma, id->msl_name);
+  fprintf (out, "\n};\n\n");
 
   /* Dump out function idents.
      Must match struct definition in libgomp/plugin/plugin-metal.cpp.  */
+  fprintf (out, "static const struct metal_fn_launch {\n"
+	   "  const char *fn;\n"
+	   "  unsigned short dim[%d];\n"
+	   "} func_mappings[] = {\n", GOMP_DIM_MAX);
+  unsigned fn_count = 0;
   if (!func_ids)
-    {
-      fprintf (out,
-	       "static const struct metal_fn_launch *const func_mappings = NULL;\n\n");
-    }
+    fprintf (out, "\n\t{NULL, {0, 0, 0}}");
   else
     {
-      fprintf (out, "static const struct metal_fn_launch {\n"
-	       "  const char *fn;\n"
-	       "  unsigned short dim[%d];\n"
-	       "} func_mappings[] = {\n", GOMP_DIM_MAX);
       for (comma = "", id = func_ids; id; comma = ",", id = id->next)
-	fprintf (out, "%s\n\t{\"%s\"%s}", comma, id->msl_name,
-		 id->dim ? id->dim : ", {0, 0, 0}");
-      fprintf (out, "\n};\n\n");
+	{
+	  fn_count++;
+	  fprintf (out, "%s\n\t{\"%s\"%s}", comma, id->msl_name,
+		   id->dim ? id->dim : ", {0, 0, 0}");
+	}
     }
+  fprintf (out, "\n};\n\n");
 
   /* Offload image header structure passed to runtime plugin.
      Must match struct definition in libgomp/plugin/plugin-metal.cpp.
@@ -489,7 +422,6 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 	   "  const struct metal_obj *metal_objs;\n"
 	   "  unsigned metal_num;\n"
 	   "  const char *const *var_names;\n"
-	   "  const uintptr_t *var_sizes;\n"
 	   "  unsigned var_num;\n"
 	   "  const struct metal_fn_launch *fn_descs;\n"
 	   "  unsigned fn_num;\n"
@@ -500,14 +432,10 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 	   "static const struct metal_tdata metal_data = {\n"
 	   "  %d,\n"
 	   "  metal_objs, sizeof (metal_objs) / sizeof (metal_objs[0]),\n"
-	   "  var_mappings, var_sizes,\n"
-	   "  %s,\n"
-	   "  func_mappings, %s,\n"
+	   "  var_mappings, %u,\n"
+	   "  func_mappings, %u,\n"
 	   "  0\n"
-	   "};\n\n",
-	   omp_requires,
-	   var_ids ? "sizeof (var_mappings) / sizeof (var_mappings[0])" : "0",
-	   func_ids ? "sizeof (func_mappings) / sizeof (func_mappings[0])" : "0");
+	   "};\n\n", omp_requires, var_count, fn_count);
 
   fprintf (out,
 	   "static const struct {\n"
@@ -1859,8 +1787,6 @@ fixup_msl_device_resident_local_arrays (const char *msl_file)
 
   bool changed = false;
   unsigned rewrote_load = 0;
-  unsigned rewrote_init_helpers = 0;
-  unsigned rewrote_init_calls = 0;
 
   /* Track names of rewritten arrays.  */
   char **names = NULL;
@@ -1892,100 +1818,6 @@ fixup_msl_device_resident_local_arrays (const char *msl_file)
     return false;
   };
 
-  /* Pass 1: collect the names of "constant local" arrays.  */
-  {
-    const char *p = buf;
-    while (*p)
-      {
-	const char *ls = p;
-	const char *le = strchr (ls, '\n');
-	if (!le)
-	  le = strchr (ls, '\0');
-	p = (*le == '\n') ? le + 1 : le;
-
-	const char *s = ls;
-	while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
-	  s++;
-
-	const char *decl_prefix = "constant /* local */ char ";
-	size_t decl_prefix_len = strlen (decl_prefix);
-
-	if ((size_t) (le - s) > decl_prefix_len
-	    && memcmp (s, decl_prefix, decl_prefix_len) == 0)
-	  {
-	    const char *q = s + decl_prefix_len;
-	    const char *name_start = q;
-	    while (q < le
-		   && ((*q >= 'A' && *q <= 'Z')
-		       || (*q >= 'a' && *q <= 'z')
-		       || (*q >= '0' && *q <= '9')
-		       || *q == '_'))
-	      q++;
-	    const char *name_end = q;
-	    if (name_end > name_start && q < le && *q == '[')
-	      {
-		q++;
-		while (q < le && (*q >= '0' && *q <= '9'))
-		  q++;
-		if (q < le && *q == ']')
-		  add_name (name_start, (size_t) (name_end - name_start));
-	      }
-	  }
-      }
-  }
-
-  /* Pass 2: find init_* helpers that return the address of a device_resident
-     variable, and map them to the variable name.  */
-  struct init_helper
-  {
-    char *fn;
-    char *var;
-  };
-  struct init_helper *helpers = NULL;
-  unsigned helpers_len = 0;
-  unsigned helpers_cap = 0;
-
-  auto add_helper = [&] (const char *fn, size_t fn_len,
-			 const char *var, size_t var_len)
-  {
-    if (helpers_len == helpers_cap)
-      {
-	unsigned new_cap = helpers_cap ? helpers_cap * 2 : 8;
-	helpers = XRESIZEVEC (struct init_helper, helpers, new_cap);
-	helpers_cap = new_cap;
-      }
-    char *f = XNEWVEC (char, fn_len + 1);
-    memcpy (f, fn, fn_len);
-    f[fn_len] = '\0';
-    char *v = XNEWVEC (char, var_len + 1);
-    memcpy (v, var, var_len);
-    v[var_len] = '\0';
-    helpers[helpers_len].fn = f;
-    helpers[helpers_len].var = v;
-    helpers_len++;
-  };
-
-  auto helper_var_for = [&] (const char *fn, size_t fn_len) -> const char *
-  {
-    for (unsigned i = 0; i < helpers_len; i++)
-      if (strlen (helpers[i].fn) == fn_len
-	  && memcmp (helpers[i].fn, fn, fn_len) == 0)
-	return helpers[i].var;
-    return NULL;
-  };
-
-  auto bounded_strstr = [] (const char *s, const char *e,
-			    const char *needle) -> const char *
-  {
-    size_t n = strlen (needle);
-    if (n == 0 || e < s)
-      return NULL;
-    for (const char *q = s; q + n <= e; q++)
-      if (memcmp (q, needle, n) == 0)
-	return q;
-    return NULL;
-  };
-
   struct obstack out_obstack;
   obstack_init (&out_obstack);
 
@@ -2002,135 +1834,36 @@ fixup_msl_device_resident_local_arrays (const char *msl_file)
       while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
 	s++;
 
-      /* Replace init helpers with a trivial address-returning helper to avoid
-	 hangs from incomplete bring-up codegen.  */
-      if (startswith (s, "void init_") || startswith (s, "long init_"))
+      const char *decl_prefix = "constant /* local */ char ";
+      size_t decl_prefix_len = strlen (decl_prefix);
+
+      /* Record the name of a "constant local" array so we can rewrite address
+	 loads below.  Program-scope variables in MSL must reside in constant
+	 address space, so we intentionally do not attempt to rewrite the
+	 declaration itself here.  */
+      if ((size_t) (le - s) > decl_prefix_len
+	  && memcmp (s, decl_prefix, decl_prefix_len) == 0)
 	{
-	  const char *kw = startswith (s, "void ") ? "void " : "long ";
-	  const char *fn = s + strlen (kw);
-	  while (fn < le && (*fn == ' ' || *fn == '\t'))
-	    fn++;
-	  const char *fn_end = fn;
-	  while (fn_end < le && is_ident_char (*fn_end))
-	    fn_end++;
-
-	  /* Scan the original body to identify the referenced variable name,
-	     using a simple heuristic: look for a pattern like "&NAME[0]".  */
-	  char varbuf[256];
-	  varbuf[0] = '\0';
-	  bool seen_open = false;
-	  int depth = 0;
-
-	  const char *q = p;
-	  while (*q)
+	  const char *q = s + decl_prefix_len;
+	  const char *name_start = q;
+	  while (q < le
+		 && ((*q >= 'A' && *q <= 'Z')
+		     || (*q >= 'a' && *q <= 'z')
+		     || (*q >= '0' && *q <= '9')
+		     || *q == '_'))
+	    q++;
+	  const char *name_end = q;
+	  if (name_end > name_start && q < le && *q == '[')
 	    {
-	      const char *ls2 = q;
-	      const char *le2 = strchr (ls2, '\n');
-	      if (!le2)
-		le2 = strchr (ls2, '\0');
-	      q = (*le2 == '\n') ? le2 + 1 : le2;
-
-	      /* Try to capture NAME from "&NAME[0]".  */
-	      if (varbuf[0] == '\0')
+	      q++;
+	      while (q < le && (*q >= '0' && *q <= '9'))
+		q++;
+	      if (q < le && *q == ']')
 		{
-		  const char *amp = (const char *) memchr (ls2, '&',
-							   (size_t) (le2 - ls2));
-		  if (amp)
-		    {
-		      const char *name = amp + 1;
-		      if (name < le2
-			  && ((*name >= 'A' && *name <= 'Z')
-			      || (*name >= 'a' && *name <= 'z')
-			      || *name == '_'))
-			{
-			  const char *ne = name;
-			  while (ne < le2
-				 && ((*ne >= 'A' && *ne <= 'Z')
-				     || (*ne >= 'a' && *ne <= 'z')
-				     || (*ne >= '0' && *ne <= '9')
-				     || *ne == '_'))
-			    ne++;
-			  if (ne + 2 < le2 && ne[0] == '[' && ne[1] == '0'
-			      && ne[2] == ']')
-			    {
-			      size_t n = (size_t) (ne - name);
-			      if (n < sizeof varbuf)
-				{
-				  memcpy (varbuf, name, n);
-				  varbuf[n] = '\0';
-				}
-			    }
-			}
-		    }
+		  const char *bracket_end = q + 1;
+		  add_name (name_start, (size_t) (name_end - name_start));
+		  (void) bracket_end;
 		}
-
-	      /* Also handle patterns like "_regN = NAME;" where NAME is a known
-		 device_resident local array.  */
-	      if (varbuf[0] == '\0')
-		{
-		  const char *eq = (const char *) memchr (ls2, '=', (size_t) (le2 - ls2));
-		  if (eq)
-		    {
-		      const char *rhs = eq + 1;
-		      while (rhs < le2 && (*rhs == ' ' || *rhs == '\t' || *rhs == '\r'))
-			rhs++;
-		      const char *id_start = rhs;
-		      while (rhs < le2
-			     && ((*rhs >= 'A' && *rhs <= 'Z')
-				 || (*rhs >= 'a' && *rhs <= 'z')
-				 || (*rhs >= '0' && *rhs <= '9')
-				 || *rhs == '_'))
-			rhs++;
-		      const char *id_end = rhs;
-		      while (rhs < le2 && (*rhs == ' ' || *rhs == '\t' || *rhs == '\r'))
-			rhs++;
-		      if (id_end > id_start && rhs < le2 && *rhs == ';'
-			  && is_known (id_start, (size_t) (id_end - id_start)))
-			{
-			  size_t n = (size_t) (id_end - id_start);
-			  if (n < sizeof varbuf)
-			    {
-			      memcpy (varbuf, id_start, n);
-			      varbuf[n] = '\0';
-			    }
-			}
-		    }
-		}
-
-	      for (const char *c = ls2; c < le2; c++)
-		{
-		  if (*c == '{')
-		    {
-		      depth++;
-		      seen_open = true;
-		    }
-		  else if (*c == '}')
-		    depth--;
-		}
-
-	      if (seen_open && depth == 0 && bounded_strstr (ls2, le2, "}") != NULL)
-		{
-		  p = q;
-		  break;
-		}
-	    }
-
-	  if (varbuf[0] != '\0')
-	    {
-	      add_helper (fn, (size_t) (fn_end - fn), varbuf, strlen (varbuf));
-	      obstack_grow (&out_obstack, "static inline long ",
-			    strlen ("static inline long "));
-	      obstack_grow (&out_obstack, fn, (size_t) (fn_end - fn));
-	      obstack_grow (&out_obstack, "(device char* ",
-			    strlen ("(device char* "));
-	      obstack_grow (&out_obstack, varbuf, strlen (varbuf));
-	      obstack_grow (&out_obstack, ")\n{\n  return (long)(ulong)",
-			    strlen (")\n{\n  return (long)(ulong)"));
-	      obstack_grow (&out_obstack, varbuf, strlen (varbuf));
-	      obstack_grow (&out_obstack, ";\n}\n", strlen (";\n}\n"));
-	      changed = true;
-	      rewrote_init_helpers++;
-	      continue;
 	    }
 	}
 
@@ -2174,54 +1907,6 @@ fixup_msl_device_resident_local_arrays (const char *msl_file)
 	  }
       }
 
-      /* Rewrite init helper calls "init_x();" to "init_x(VAR);".  */
-      if (helpers_len)
-	{
-	  const char *cur = ls;
-	  const char *best = NULL;
-	  unsigned best_i = 0;
-	  size_t best_pat_len = 0;
-
-	  auto find_next = [&] (const char *from, const char *to) -> bool
-	  {
-	    best = NULL;
-	    for (unsigned i = 0; i < helpers_len; i++)
-	      {
-		char pat[256];
-		snprintf (pat, sizeof pat, "%s();", helpers[i].fn);
-		const char *hit = bounded_strstr (from, to, pat);
-		if (hit && (!best || hit < best))
-		  {
-		    best = hit;
-		    best_i = i;
-		    best_pat_len = strlen (pat);
-		  }
-	      }
-	    return best != NULL;
-	  };
-
-	  if (find_next (cur, le))
-	    {
-	      while (find_next (cur, le))
-		{
-		  obstack_grow (&out_obstack, cur, (size_t) (best - cur));
-		  obstack_grow (&out_obstack, helpers[best_i].fn,
-				strlen (helpers[best_i].fn));
-		  obstack_1grow (&out_obstack, '(');
-		  obstack_grow (&out_obstack, helpers[best_i].var,
-				strlen (helpers[best_i].var));
-		  obstack_grow (&out_obstack, ");", strlen (");"));
-		  cur = best + best_pat_len;
-		  changed = true;
-		  rewrote_init_calls++;
-		}
-
-	      obstack_grow (&out_obstack, cur, (size_t) (le - cur));
-	      obstack_1grow (&out_obstack, '\n');
-	      continue;
-	    }
-	}
-
       obstack_grow (&out_obstack, ls, (size_t) (le - ls));
       obstack_1grow (&out_obstack, '\n');
     }
@@ -2241,20 +1926,10 @@ fixup_msl_device_resident_local_arrays (const char *msl_file)
     fprintf (stderr,
 	     "mkoffload: device_resident fixups in %s: %u load(s)\n",
 	     msl_file, rewrote_load);
-  if (verbose && (rewrote_init_helpers || rewrote_init_calls))
-    fprintf (stderr,
-	     "mkoffload: device_resident init fixups in %s: %u helper(s), %u call(s)\n",
-	     msl_file, rewrote_init_helpers, rewrote_init_calls);
 
   for (unsigned i = 0; i < names_len; i++)
     free (names[i]);
   free (names);
-  for (unsigned i = 0; i < helpers_len; i++)
-    {
-      free (helpers[i].fn);
-      free (helpers[i].var);
-    }
-  free (helpers);
 
   obstack_free (&out_obstack, NULL);
   free (CONST_CAST (char *, buf));
@@ -2308,40 +1983,6 @@ fixup_msl_devaddrs_deref (const char *msl_file)
 	le = strchr (ls, '\0');
       p = (*le == '\n') ? le + 1 : le;
 
-      /* Fallback: drop any immediate self-dereference of an int64 devaddrs
-	 entry.  These are almost always wrong for OpenACC, where the devaddrs
-	 element is already a device pointer, not a pointer-to-pointer.  */
-      {
-	const char *s = ls;
-	while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
-	  s++;
-	unsigned regno = 0;
-	if (s + 4 < le && s[0] == '_' && s[1] == 'r' && s[2] == 'e'
-	    && s[3] == 'g')
-	  {
-	    const char *q = s + 4;
-	    bool any = false;
-	    while (q < le && *q >= '0' && *q <= '9')
-	      {
-		any = true;
-		regno = regno * 10 + (*q - '0');
-		q++;
-	      }
-	    if (any)
-	      {
-		char pat[128];
-		snprintf (pat, sizeof pat, "_reg%u = *(device int64_t*)_reg%u;",
-			  regno, regno);
-		if (bounded_strstr (s, le, pat) != NULL)
-		  {
-		    changed = true;
-		    removed++;
-		    continue;
-		  }
-	      }
-	  }
-      }
-
       /* Match: <ws>_regN = *(device int64_t*)_reg1;  */
       unsigned regno = 0;
       int base_reg = -1;
@@ -2379,35 +2020,6 @@ fixup_msl_devaddrs_deref (const char *msl_file)
 
       if (base_reg != -1)
 	{
-	  /* If the next line treats the assigned register as a base pointer
-	     (e.g. "_regN = *(device int64_t*)(_regN + 8);"), then the first
-	     load was spurious: keep the base register pointer instead.  */
-	  const char *ls_next = p;
-	  const char *le_next = ls_next ? strchr (ls_next, '\n') : NULL;
-	  if (!le_next)
-	    le_next = ls_next ? strchr (ls_next, '\0') : NULL;
-	  if (ls_next && le_next)
-	    {
-	      char pat_off[128];
-	      snprintf (pat_off, sizeof pat_off,
-			"_reg%u = *(device int64_t*)(_reg%u +", regno, regno);
-	      if (bounded_strstr (ls_next, le_next, pat_off) != NULL)
-		{
-		  const char *eq = (const char *) memchr (ls, '=', (size_t) (le - ls));
-		  if (eq)
-		    {
-		      obstack_grow (&out_obstack, ls, (size_t) (eq - ls + 1));
-		      char repl[64];
-		      snprintf (repl, sizeof repl, " _reg%d;", base_reg);
-		      obstack_grow (&out_obstack, repl, strlen (repl));
-		      obstack_1grow (&out_obstack, '\n');
-		      changed = true;
-		      removed++;
-		      continue;
-		    }
-		}
-	    }
-
 	  /* Peek at next line: <ws>_regN = *(device int64_t*)_regN;  */
 	  const char *ls2 = p;
 	  const char *le2 = ls2 ? strchr (ls2, '\n') : NULL;
@@ -2466,8 +2078,6 @@ compile_metal (const char *msl_file, const char *metallib_file)
   rewrite_msl_control_flow (msl_file);
   fixup_msl_locals_and_addresses (msl_file);
   fold_msl_acc_on_device_const (msl_file);
-  fixup_msl_reg1_int_slot (msl_file);
-  inject_msl_var_buffers (msl_file);
   fixup_msl_device_resident_local_arrays (msl_file);
   fixup_msl_devaddrs_deref (msl_file);
   maybe_stub_undeclared_identifiers (msl_file);
@@ -2533,252 +2143,6 @@ compile_metal (const char *msl_file, const char *metallib_file)
 
   if (!save_temps)
     maybe_unlink (air_name);
-}
-
-/* The current Metal bring-up backend uses a synthetic memory slot for some
-   temporaries/call arguments and (incorrectly) aliases it to _reg1, which also
-   holds the kernel argument pointer.  This can lead to stores like:
-
-     *(device int*)_reg1 = 0;
-
-   clobbering the devaddrs array and causing kernel hangs.  Rewrite such
-   accesses to use an explicit local variable.  */
-static void
-fixup_msl_reg1_int_slot (const char *msl_file)
-{
-  FILE *in = fopen (msl_file, "r");
-  if (!in)
-    fatal_error (input_location, "opening %s: %m", msl_file);
-  size_t len = 0;
-  const char *buf = read_file (in, &len);
-  fclose (in);
-
-  bool changed = false;
-  struct obstack out_obstack;
-  obstack_init (&out_obstack);
-
-  auto bounded_strstr = [] (const char *s, const char *e,
-			    const char *needle) -> const char *
-  {
-    size_t n = strlen (needle);
-    if (n == 0 || e < s)
-      return NULL;
-    for (const char *q = s; q + n <= e; q++)
-      if (memcmp (q, needle, n) == 0)
-	return q;
-    return NULL;
-  };
-
-  bool in_kernel = false;
-  bool inserted = false;
-  const char *slot = "__mkoffload_reg1_int";
-
-  const char *p = buf;
-  while (*p)
-    {
-      const char *ls = p;
-      const char *le = strchr (ls, '\n');
-      if (!le)
-	le = strchr (ls, '\0');
-      p = (*le == '\n') ? le + 1 : le;
-
-      const char *s = ls;
-      while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
-	s++;
-
-      if (startswith (s, "kernel void "))
-	{
-	  in_kernel = true;
-	  inserted = false;
-	}
-      else if (in_kernel && ls < le && ls[0] == '}')
-	{
-	  in_kernel = false;
-	}
-
-      /* Replace occurrences within kernel bodies.  */
-      if (in_kernel)
-	{
-	  const char *cur = ls;
-	  while (cur < le)
-	    {
-	      const char *h2 = strstr (cur, "*(device int*)(_reg1 + 0)");
-	      const char *h1 = NULL;
-	      {
-		const char *search = cur;
-		while (true)
-		  {
-		    const char *cand = strstr (search, "*(device int*)_reg1");
-		    if (!cand || cand >= le)
-		      break;
-		    const char *after = cand + strlen ("*(device int*)_reg1");
-		    if (after < le && *after >= '0' && *after <= '9')
-		      {
-			search = cand + 1;
-			continue;
-		      }
-		    h1 = cand;
-		    break;
-		  }
-	      }
-	      if (h1 && h1 >= le)
-		h1 = NULL;
-	      if (h2 && h2 >= le)
-		h2 = NULL;
-	      const char *hit = NULL;
-	      size_t adv = 0;
-	      if (h1 && (!h2 || h1 < h2))
-		{
-		  hit = h1;
-		  adv = strlen ("*(device int*)_reg1");
-		}
-	      else if (h2)
-		{
-		  hit = h2;
-		  adv = strlen ("*(device int*)(_reg1 + 0)");
-		}
-	      if (!hit)
-		break;
-
-	      obstack_grow (&out_obstack, cur, (size_t) (hit - cur));
-	      obstack_grow (&out_obstack, slot, strlen (slot));
-	      cur = hit + adv;
-	      changed = true;
-	    }
-	  obstack_grow (&out_obstack, cur, (size_t) (le - cur));
-	  obstack_1grow (&out_obstack, '\n');
-
-	  /* Insert the slot definition once per kernel.  */
-	  if (!inserted && bounded_strstr (ls, le, "int __gcc_bb = 0;") != NULL)
-	    {
-	      obstack_grow (&out_obstack, "  int ", strlen ("  int "));
-	      obstack_grow (&out_obstack, slot, strlen (slot));
-	      obstack_grow (&out_obstack, " = 0;\n", strlen (" = 0;\n"));
-	      inserted = true;
-	      changed = true;
-	    }
-	  continue;
-	}
-
-      obstack_grow (&out_obstack, ls, (size_t) (le - ls));
-      obstack_1grow (&out_obstack, '\n');
-    }
-
-  if (changed)
-    {
-      obstack_1grow (&out_obstack, '\0');
-      const char *outbuf = (const char *) obstack_finish (&out_obstack);
-      FILE *outf = fopen (msl_file, "w");
-      if (!outf)
-	fatal_error (input_location, "writing %s: %m", msl_file);
-      fwrite (outbuf, 1, strlen (outbuf), outf);
-      fclose (outf);
-    }
-
-  obstack_free (&out_obstack, NULL);
-  free (CONST_CAST (char *, buf));
-}
-
-/* Inject additional kernel parameters for VAR_MAP entries.
-
-   For OpenACC, device_resident data needs stable device addresses that the
-   host runtime can use.  Metal doesn't support writable program-scope globals,
-   so pass VAR_MAP storage as explicit buffers.
-
-   mkoffload already collects VAR_MAP names (var_ids).  Here we inject these
-   into every "kernel void ..." signature after the existing args buffer:
-
-     kernel void K(device char* _args_ptr [[buffer(0)]], ...)
-   becomes:
-     kernel void K(device char* _args_ptr [[buffer(0)]],
-         device char* VAR0 [[buffer(1)]],
-         device char* VAR1 [[buffer(2)]], ...)
-
-   If a kernel already has [[buffer(1)]] arguments, do not re-inject.  */
-static void
-inject_msl_var_buffers (const char *msl_file)
-{
-  if (!var_ids)
-    return;
-
-  FILE *in = fopen (msl_file, "r");
-  if (!in)
-    fatal_error (input_location, "opening %s: %m", msl_file);
-  size_t len = 0;
-  const char *buf = read_file (in, &len);
-  fclose (in);
-
-  bool changed = false;
-  struct obstack out_obstack;
-  obstack_init (&out_obstack);
-
-  bool in_sig = false;
-  bool have_buffers = false;
-  bool injected = false;
-
-  const char *p = buf;
-  while (*p)
-    {
-      const char *ls = p;
-      const char *le = strchr (ls, '\n');
-      if (!le)
-	le = strchr (ls, '\0');
-      p = (*le == '\n') ? le + 1 : le;
-
-      const char *s = ls;
-      while (s < le && (*s == ' ' || *s == '\t' || *s == '\r'))
-	s++;
-
-      if (startswith (s, "kernel void "))
-	{
-	  in_sig = true;
-	  have_buffers = false;
-	  injected = false;
-	}
-      else if (in_sig && startswith (s, "{"))
-	{
-	  in_sig = false;
-	}
-
-      if (in_sig && strstr (ls, "[[buffer(1)]]") != NULL)
-	have_buffers = true;
-
-      obstack_grow (&out_obstack, ls, (size_t) (le - ls));
-      obstack_1grow (&out_obstack, '\n');
-
-      if (in_sig && !have_buffers && !injected
-	  && strstr (ls, "[[buffer(0)]]") != NULL)
-	{
-	  unsigned idx = 1;
-	  for (id_map *id = var_ids; id; id = id->next, idx++)
-	    {
-	      const char *name = id->msl_name;
-	      if (!name || !name[0])
-		continue;
-	      char line[512];
-	      snprintf (line, sizeof line,
-			"    device char* %s [[buffer(%u)]],\n",
-			name, idx);
-	      obstack_grow (&out_obstack, line, strlen (line));
-	    }
-	  injected = true;
-	  changed = true;
-	}
-    }
-
-  if (changed)
-    {
-      obstack_1grow (&out_obstack, '\0');
-      const char *outbuf = (const char *) obstack_finish (&out_obstack);
-      FILE *outf = fopen (msl_file, "w");
-      if (!outf)
-	fatal_error (input_location, "writing %s: %m", msl_file);
-      fwrite (outbuf, 1, strlen (outbuf), outf);
-      fclose (outf);
-    }
-
-  obstack_free (&out_obstack, NULL);
-  free (CONST_CAST (char *, buf));
 }
 
 static void
