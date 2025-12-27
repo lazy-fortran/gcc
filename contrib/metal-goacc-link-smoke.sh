@@ -27,7 +27,7 @@ HOST=
 HOSTB=
 OFFLOAD_PATH=
 LIBGOMP_PATH=
-LIMIT=50
+LIMIT=0
 OUTDIR=${TMPDIR:-/tmp}/metal-goacc-link-smoke
 ALLOW_UNDEFINED=0
 
@@ -137,8 +137,9 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
       skip_needs_double=$((skip_needs_double + 1))
     elif [ "$ALLOW_UNDEFINED" -eq 1 ] \
       && rg -q --no-messages 'use of undeclared identifier' "$err"; then
-      echo "SKIP $base (device externs)" | tee -a "$LOG"
-      skip=$((skip + 1))
+      echo "FAIL $base (undeclared identifier in device code; see $err)" | tee -a "$LOG"
+      fail=$((fail + 1))
+      sed -n '1,60p' "$err" | sed 's/^/  /' | tee -a "$LOG" || true
     elif rg -q --no-messages 'Undefined symbols for architecture|symbol\\(s\\) not found' "$err"; then
       echo "SKIP $base (not standalone)" | tee -a "$LOG"
       skip=$((skip + 1))
@@ -152,10 +153,14 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
 
   echo | tee -a "$LOG"
   tried=$((tried + 1))
-  if [ "$tried" -ge "$LIMIT" ]; then
+  if [ "$LIMIT" -gt 0 ] && [ "$tried" -ge "$LIMIT" ]; then
     break
   fi
 done
 
 echo "SUMMARY tried=$tried pass=$pass fail=$fail skip=$skip (not-standalone=$skip_not_standalone needs-double=$skip_needs_double)" | tee -a "$LOG"
 echo "Log: $LOG" >&2
+
+if [ "$fail" -ne 0 ]; then
+  exit 1
+fi
