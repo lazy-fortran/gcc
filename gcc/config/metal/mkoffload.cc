@@ -397,16 +397,23 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   if (!func_ids)
     fprintf (out, "\n\t{NULL, {0, 0, 0}}");
   else
-    for (comma = "", id = func_ids; id; comma = ",", id = id->next)
-      fprintf (out, "%s\n\t{\"%s\"%s}", comma, id->msl_name,
-	       id->dim ? id->dim : ", {0, 0, 0}");
+    {
+      /* The host function table begins with a leading NULL entry; emit a
+	 corresponding descriptor so libgomp can map it.  */
+      fprintf (out, "\n\t{NULL, {0, 0, 0}}");
+      for (id = func_ids; id; id = id->next)
+	fprintf (out, ",\n\t{\"%s\"%s}", id->msl_name,
+		 id->dim ? id->dim : ", {0, 0, 0}");
+    }
   fprintf (out, "\n};\n\n");
 
   /* Offload image header structure passed to runtime plugin.
      Must match struct definition in libgomp/plugin/plugin-metal.cpp.
-     This structure is passed to GOMP_OFFLOAD_load_image as target_data.  */
+     Note: libgomp expects (for GOMP_VERSION_LIB(version) > 1) that the pointer
+     passed as 'data' to GOMP_offload_register_ver begins with a void* holding
+     the omp_requires mask, followed immediately by the target-specific data.  */
   fprintf (out,
-	   "static const struct metal_tdata {\n"
+	   "struct metal_tdata {\n"
 	   "  uintptr_t omp_requires_mask;\n"
 	   "  const struct metal_obj *metal_objs;\n"
 	   "  unsigned metal_num;\n"
@@ -415,12 +422,24 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
 	   "  const struct metal_fn_launch *fn_descs;\n"
 	   "  unsigned fn_num;\n"
 	   "  unsigned ind_fn_num;\n"
-	   "} metal_data = {\n"
+	   "};\n\n");
+
+  fprintf (out,
+	   "static const struct metal_tdata metal_data = {\n"
 	   "  %d,\n"
 	   "  metal_objs, sizeof (metal_objs) / sizeof (metal_objs[0]),\n"
 	   "  var_mappings, sizeof (var_mappings) / sizeof (var_mappings[0]),\n"
 	   "  func_mappings, sizeof (func_mappings) / sizeof (func_mappings[0]),\n"
 	   "  0\n"
+	   "};\n\n", omp_requires);
+
+  fprintf (out,
+	   "static const struct {\n"
+	   "  void *omp_requires_mask;\n"
+	   "  struct metal_tdata target_data;\n"
+	   "} metal_data_wrapper = {\n"
+	   "  (void *)(uintptr_t)%d,\n"
+	   "  metal_data\n"
 	   "};\n\n", omp_requires);
 
   fprintf (out, "#ifdef __cplusplus\n"
@@ -441,7 +460,7 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   fprintf (out, "static __attribute__((constructor)) void init (void)\n"
 	   "{\n"
 	   "  GOMP_offload_register_ver (%#x, __OFFLOAD_TABLE__,"
-	   " %d/*METAL*/, &metal_data);\n"
+	   " %d/*METAL*/, &metal_data_wrapper);\n"
 	   "};\n",
 	   GOMP_VERSION_PACK (GOMP_VERSION, GOMP_VERSION_METAL),
 	   GOMP_DEVICE_METAL);
@@ -449,7 +468,7 @@ process (FILE *in, FILE *out, uint32_t omp_requires)
   fprintf (out, "static __attribute__((destructor)) void fini (void)\n"
 	   "{\n"
 	   "  GOMP_offload_unregister_ver (%#x, __OFFLOAD_TABLE__,"
-	   " %d/*METAL*/, &metal_data);\n"
+	   " %d/*METAL*/, &metal_data_wrapper);\n"
 	   "};\n",
 	   GOMP_VERSION_PACK (GOMP_VERSION, GOMP_VERSION_METAL),
 	   GOMP_DEVICE_METAL);

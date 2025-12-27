@@ -77,6 +77,91 @@ metal_debugf (const char *fmt, ...)
   va_end (ap);
 }
 
+static void
+metal_emit_cpymem_unrolled (rtx src, rtx dst, machine_mode mode,
+			    unsigned HOST_WIDE_INT size_bytes,
+			    unsigned chunk_bytes)
+{
+  unsigned HOST_WIDE_INT offset = 0;
+  unsigned HOST_WIDE_INT iters = size_bytes / chunk_bytes;
+  unsigned HOST_WIDE_INT remainder = size_bytes % chunk_bytes;
+
+  for (unsigned HOST_WIDE_INT i = 0; i < iters; i++)
+    {
+      emit_insn (gen_rtx_SET (adjust_address (dst, mode, offset),
+			      adjust_address (src, mode, offset)));
+      offset += chunk_bytes;
+    }
+
+  if (remainder & 4)
+    {
+      emit_insn (gen_rtx_SET (adjust_address (dst, SImode, offset),
+			      adjust_address (src, SImode, offset)));
+      offset += 4;
+      remainder -= 4;
+    }
+  if (remainder & 2)
+    {
+      emit_insn (gen_rtx_SET (adjust_address (dst, HImode, offset),
+			      adjust_address (src, HImode, offset)));
+      offset += 2;
+      remainder -= 2;
+    }
+  if (remainder & 1)
+    emit_insn (gen_rtx_SET (adjust_address (dst, QImode, offset),
+			    adjust_address (src, QImode, offset)));
+}
+
+/* Expand cpymem/movmem (as from __builtin_memcpy/memmove).
+   OPERANDS are the same as the cpymem/movmem patterns.
+   IS_MOVE is true if this is a memmove, false for memcpy.
+   Return true if we successfully expanded, or false if we cannot and must
+   punt to a libcall.  */
+
+bool
+metal_expand_cpymem (rtx *operands, bool is_move)
+{
+  (void) is_move;
+
+  if (!CONST_INT_P (operands[2]) || !CONST_INT_P (operands[3]))
+    return false;
+
+  rtx dst = operands[0];
+  rtx src = operands[1];
+  unsigned HOST_WIDE_INT size_bytes = UINTVAL (operands[2]);
+  unsigned HOST_WIDE_INT align = UINTVAL (operands[3]);
+
+  if (size_bytes == 0)
+    return true;
+
+  /* Unroll constant-size copies that show up frequently in ABI lowering.
+     Keep this conservative to avoid excessive compile-time/code-size.  */
+  if (size_bytes > 4096)
+    return false;
+
+  /* Choose the largest chunk size we can do in a single move.  */
+  unsigned chunk_bytes = 1;
+  if (align >= 8)
+    chunk_bytes = 8;
+  else if (align >= 4)
+    chunk_bytes = 4;
+  else if (align >= 2)
+    chunk_bytes = 2;
+
+  machine_mode mode = QImode;
+  switch (chunk_bytes)
+    {
+    case 1: mode = QImode; break;
+    case 2: mode = HImode; break;
+    case 4: mode = SImode; break;
+    case 8: mode = DImode; break;
+    default: gcc_unreachable ();
+    }
+
+  metal_emit_cpymem_unrolled (src, dst, mode, size_bytes, chunk_bytes);
+  return true;
+}
+
 /* This file should be included last.  */
 #include "target-def.h"
 
@@ -581,16 +666,28 @@ metal_print_operand_address (FILE *file, rtx addr)
       }
       break;
 
-    case SYMBOL_REF:
-    case LABEL_REF:
-    case CONST:
-      output_addr_const (file, addr);
-      break;
+	case SYMBOL_REF:
+	  if (SYMBOL_REF_FUNCTION_P (addr))
+	    output_addr_const (file, addr);
+	  else
+	    {
+	      fputc ('&', file);
+	      output_addr_const (file, addr);
+	    }
+	  break;
 
-    default:
-      output_addr_const (file, addr);
-      break;
-    }
+	case LABEL_REF:
+	  output_addr_const (file, addr);
+	  break;
+
+	case CONST:
+	  metal_print_operand_address (file, XEXP (addr, 0));
+	  break;
+
+	default:
+	  output_addr_const (file, addr);
+	  break;
+	}
 }
 
 /* Check if a function should be emitted as a kernel.  */
@@ -857,10 +954,23 @@ metal_pass_by_reference (cumulative_args_t, const function_arg_info &arg)
 /* Implement TARGET_RETURN_IN_MEMORY.  */
 
 static bool
-metal_return_in_memory (const_tree, const_tree)
+metal_return_in_memory (const_tree type, const_tree)
 {
-  /* All values returned in registers for now.  */
-  return false;
+  /* Match our current very-simple ABI:
+     - Small scalars may return in registers.
+     - Aggregates larger than 16 bytes return in memory.  */
+  if (!type)
+    return false;
+
+  machine_mode mode = TYPE_MODE (type);
+  if (mode == BLKmode)
+    return true;
+
+  if (TYPE_SIZE (type) && TREE_CODE (TYPE_SIZE (type)) == INTEGER_CST)
+    return TREE_INT_CST_LOW (TYPE_SIZE (type)) > 128;
+
+  /* Unknown size: be conservative.  */
+  return true;
 }
 
 /* Implement TARGET_MODES_TIEABLE_P.  */

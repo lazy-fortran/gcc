@@ -28,5 +28,6 @@ extern void metal_declare_object_name (FILE *, const char *, const_tree);
 extern void metal_output_aligned_decl (FILE *, const char *, const_tree,
 					HOST_WIDE_INT, unsigned int);
 extern void metal_function_end (FILE *);
+extern bool metal_expand_cpymem (rtx *, bool);
 
 #endif /* GCC_METAL_PROTOS_H */

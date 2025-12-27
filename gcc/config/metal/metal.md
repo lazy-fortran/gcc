@@ -59,6 +59,21 @@
   return register_operand (addr, Pmode) || register_operand (addr, ptr_mode);
 })
 
+(define_predicate "metal_program_scope_mem_operand"
+  (match_code "mem")
+{
+  rtx addr = XEXP (op, 0);
+  if (GET_CODE (addr) == CONST)
+    addr = XEXP (addr, 0);
+  if (!SYMBOL_REF_P (addr) || SYMBOL_REF_FUNCTION_P (addr))
+    return false;
+  tree decl = SYMBOL_REF_DECL (addr);
+  if (!decl || TREE_CODE (decl) != VAR_DECL)
+    return false;
+  addr_space_t as = TYPE_ADDR_SPACE (TREE_TYPE (decl));
+  return as == ADDR_SPACE_CONSTANT || as == ADDR_SPACE_GENERIC;
+})
+
 ;; Constraints
 
 (define_register_constraint "R" "ALL_REGS"
@@ -105,14 +120,15 @@
 })
 
 (define_insn "*movqi_insn"
-  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,m")
-	(match_operand:QI 1 "general_operand" "i,m,r"))]
+  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r,m")
+	(match_operand:QI 1 "general_operand" "i,r,m,r"))]
   "!MEM_P (operands[0]) || register_operand (operands[1], QImode)"
-	  "@
-	   %0 = %1;
-	   %0 = *(device char*)%1;
-	   /* */*(device char*)%0 = %1;"
-	  [(set_attr "type" "move,load,store")])
+		  "@
+		   %0 = %1;
+		   %0 = %1;
+		   %0 = *(device char*)%1;
+		   /* */*(device char*)%0 = %1;"
+		  [(set_attr "type" "move,move,load,store")])
 
 (define_expand "movhi"
   [(set (match_operand:HI 0 "nonimmediate_operand")
@@ -129,14 +145,15 @@
 })
 
 (define_insn "*movhi_insn"
-  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,m")
-	(match_operand:HI 1 "general_operand" "i,m,r"))]
+  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r,m")
+	(match_operand:HI 1 "general_operand" "i,r,m,r"))]
   "!MEM_P (operands[0]) || register_operand (operands[1], HImode)"
-	  "@
-	   %0 = %1;
-	   %0 = *(device short*)%1;
-	   /* */*(device short*)%0 = %1;"
-	  [(set_attr "type" "move,load,store")])
+		  "@
+		   %0 = %1;
+		   %0 = %1;
+		   %0 = *(device short*)%1;
+		   /* */*(device short*)%0 = %1;"
+		  [(set_attr "type" "move,move,load,store")])
 
 (define_expand "movsi"
   [(set (match_operand:SI 0 "nonimmediate_operand")
@@ -177,16 +194,88 @@
     }
 })
 
+;; Program-scope variables can only exist in constant address space in MSL.
+;; For now, ignore stores to such variables (libgomp/plugin-metal currently
+;; reports variables as unavailable), and treat loads as constant loads.
+
+(define_insn "*movdi_program_scope_load"
+  [(set (match_operand:DI 0 "metal_register_operand" "=R")
+	(match_operand:DI 1 "metal_program_scope_mem_operand" "m"))]
+  ""
+  "%0 = *(constant int64_t*)%1;"
+  [(set_attr "type" "load")])
+
+(define_insn "*movdi_program_scope_store"
+  [(set (match_operand:DI 0 "metal_program_scope_mem_operand" "=m")
+	(match_operand:DI 1 "general_operand" "Ri"))]
+  ""
+  ";"
+  [(set_attr "type" "store")])
+
 (define_insn "*movdi_insn"
   [(set (match_operand:DI 0 "nonimmediate_operand" "=R,R,m,m")
 	(match_operand:DI 1 "general_operand" "Ri,m,R,Ri"))]
   ""
-	  "@
-	   %0 = %1;
-	   %0 = *(device int64_t*)%1;
-	   /* */*(device int64_t*)%0 = %1;
-	   /* */*(device int64_t*)%0 = %1;"
-	  [(set_attr "type" "move,load,store,store")])
+		  "@
+		   %0 = %1;
+		   %0 = *(device int64_t*)%1;
+		   /* */*(device int64_t*)%0 = %1;
+		   /* */*(device int64_t*)%0 = %1;"
+		  [(set_attr "type" "move,load,store,store")])
+
+;; Block move
+;; 0 is destination
+;; 1 is source
+;; 2 is size of copy in bytes
+;; 3 is alignment
+
+(define_expand "cpymemdi"
+  [(match_operand:BLK 0 "memory_operand")
+   (match_operand:BLK 1 "memory_operand")
+   (match_operand:DI 2 "general_operand")
+   (match_operand:DI 3 "immediate_operand")]
+  ""
+{
+  if (metal_expand_cpymem (operands, false))
+    DONE;
+  FAIL;
+})
+
+(define_expand "cpymemsi"
+  [(match_operand:BLK 0 "memory_operand")
+   (match_operand:BLK 1 "memory_operand")
+   (match_operand:SI 2 "general_operand")
+   (match_operand:SI 3 "immediate_operand")]
+  ""
+{
+  if (metal_expand_cpymem (operands, false))
+    DONE;
+  FAIL;
+})
+
+(define_expand "movmemdi"
+  [(match_operand:BLK 0 "memory_operand")
+   (match_operand:BLK 1 "memory_operand")
+   (match_operand:DI 2 "general_operand")
+   (match_operand:DI 3 "immediate_operand")]
+  ""
+{
+  if (metal_expand_cpymem (operands, true))
+    DONE;
+  FAIL;
+})
+
+(define_expand "movmemsi"
+  [(match_operand:BLK 0 "memory_operand")
+   (match_operand:BLK 1 "memory_operand")
+   (match_operand:SI 2 "general_operand")
+   (match_operand:SI 3 "immediate_operand")]
+  ""
+{
+  if (metal_expand_cpymem (operands, true))
+    DONE;
+  FAIL;
+})
 
 (define_expand "movsf"
   [(set (match_operand:SF 0 "nonimmediate_operand")

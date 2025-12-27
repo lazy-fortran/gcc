@@ -536,10 +536,14 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   const struct metal_fn_launch *fn_descs = img_header->fn_descs;
   const char *const *var_names = img_header->var_names;
 
-  /* Allocate target table for functions and variables.  */
+  /* Currently, other_entries contains only the struct of ICVs.  */
+  unsigned other_entries = 1;
+
+  /* Allocate target table for functions, variables, and ICVs.  */
   struct addr_pair *targ_tbl
     = (struct addr_pair *) GOMP_PLUGIN_malloc (sizeof (struct addr_pair)
-					       * (fn_entries + var_entries));
+					       * (fn_entries + var_entries
+						  + other_entries));
   *target_table = targ_tbl;
 
   /* Allocate function descriptor array.  */
@@ -561,6 +565,17 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   for (unsigned i = 0; i < fn_entries; i++)
     {
       const char *fn_name = fn_descs[i].fn;
+
+      /* Terminating entry in the host function table.  */
+      if (fn_name == nullptr)
+	{
+	  targ_fns[i].fn = nullptr;
+	  targ_fns[i].pipeline = nullptr;
+	  targ_fns[i].launch = &fn_descs[i];
+	  targ_tbl[i].start = 0;
+	  targ_tbl[i].end = 0;
+	  continue;
+	}
 
       /* Get function from library.  */
       NS::String *fn_str = NS::String::string (fn_name, NS::UTF8StringEncoding);
@@ -654,6 +669,11 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
       targ_tbl[fn_entries + j].end = 0;
     }
 
+  /* Provide the required extra ICV entry.  Metal does not yet provide a
+     device-side libgomp implementation, so just mark it as unavailable.  */
+  targ_tbl[fn_entries + var_entries].start = 0;
+  targ_tbl[fn_entries + var_entries].end = 0;
+
   /* All functions loaded successfully, add image to device's image list.  */
   pthread_mutex_lock (&metal_devices[ord].image_lock);
   new_image->next = metal_devices[ord].images;
@@ -664,7 +684,7 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   if (rev_fn_table)
     *rev_fn_table = nullptr;
 
-  return fn_entries + var_entries;
+  return fn_entries + var_entries + other_entries;
 }
 
 bool
