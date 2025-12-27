@@ -1557,7 +1557,12 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
 	{
 	  if (release_exec_queue)
 	    exec_queue->release ();
-	  GOMP_PLUGIN_fatal ("Metal kernel execution timed out (status=%d)",
+	  GOMP_PLUGIN_fatal ("Metal kernel execution timed out (status=%d).  "
+			     "If command buffers remain stuck in 'scheduled', "
+			     "this can indicate Metal command submission is "
+			     "not progressing in the current login context "
+			     "(e.g. running under SSH/background rather than "
+			     "an Aqua GUI session).",
 			     (int) cmd->status ());
 	}
 
