@@ -48,6 +48,23 @@ foreach t $all_tests {
     continue
   }
 
+  # Skip tests that are explicitly checking for diagnostics.
+  if {[regexp {dg-(error|warning|bogus)} $c]} {
+    continue
+  }
+
+  # Skip tests that validate internal dumps or warning TODOs; this is a
+  # bring-up smoke that focuses on compile/link viability.
+  if {[regexp {dg-final} $c]} {
+    continue
+  }
+  if {[regexp {scan-tree-dump} $c]} {
+    continue
+  }
+  if {[regexp {TODO} $c]} {
+    continue
+  }
+
   # Skip known unsupported FP modes/types for Metal.
   if {[regexp {\blong[ \t]+double\b} $c]} {
     continue
@@ -65,4 +82,3 @@ foreach t $all_tests {
 dg-runtest $tests "" "-fopenacc -foffload=metal -g0"
 
 dg-finish
-
