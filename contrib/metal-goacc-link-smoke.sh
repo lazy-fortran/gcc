@@ -69,6 +69,9 @@ export LIBRARY_PATH="$LIBGOMP_PATH"
 
 pass=0
 fail=0
+skip=0
+skip_not_standalone=0
+skip_needs_double=0
 tried=0
 
 echo "HOST=$HOST" | tee -a "$LOG"
@@ -117,8 +120,12 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
   else
     if rg -q --no-messages "'double' is not supported in Metal" "$err"; then
       echo "SKIP $base (needs double)" | tee -a "$LOG"
+      skip=$((skip + 1))
+      skip_needs_double=$((skip_needs_double + 1))
     elif rg -q --no-messages 'Undefined symbols for architecture|symbol\\(s\\) not found' "$err"; then
       echo "SKIP $base (not standalone)" | tee -a "$LOG"
+      skip=$((skip + 1))
+      skip_not_standalone=$((skip_not_standalone + 1))
     else
       echo "FAIL $base (see $err)" | tee -a "$LOG"
       fail=$((fail + 1))
@@ -133,5 +140,5 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
   fi
 done
 
-echo "SUMMARY tried=$tried pass=$pass fail=$fail" | tee -a "$LOG"
+echo "SUMMARY tried=$tried pass=$pass fail=$fail skip=$skip (not-standalone=$skip_not_standalone needs-double=$skip_needs_double)" | tee -a "$LOG"
 echo "Log: $LOG" >&2
