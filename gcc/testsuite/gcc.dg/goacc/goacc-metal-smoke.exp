@@ -1,0 +1,68 @@
+# Copyright (C) 2006-2025 Free Software Foundation, Inc.
+#
+# This file is part of GCC.
+#
+# GCC is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3, or (at your option)
+# any later version.
+#
+# GCC is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with GCC; see the file COPYING3.  If not see
+# <http://www.gnu.org/licenses/>.
+
+# OpenACC smoke test driver for Apple Metal offload.
+#
+# This is intentionally conservative:
+# - Runs only "compile" coverage (skips dg-do run/link) to avoid runtime
+#   requirements while the offload runtime/plugin is still being brought up.
+# - Filters out sources mentioning double/long double/_Complex to avoid known
+#   Metal shading language limitations (double precision not supported).
+
+load_lib gcc-dg.exp
+
+if ![check_effective_target_fopenacc] {
+  return
+}
+
+dg-init
+
+set common_dir "$srcdir/c-c++-common/goacc"
+set all_tests [lsort [find $common_dir *.c]]
+set tests {}
+
+foreach t $all_tests {
+  set f [open $t r]
+  set c [read $f]
+  close $f
+
+  if {[regexp {dg-do[ \t]+run} $c]} {
+    continue
+  }
+  if {[regexp {dg-do[ \t]+link} $c]} {
+    continue
+  }
+
+  # Skip known unsupported FP modes/types for Metal.
+  if {[regexp {\blong[ \t]+double\b} $c]} {
+    continue
+  }
+  if {[regexp {\bdouble\b} $c]} {
+    continue
+  }
+  if {[regexp {_Complex} $c]} {
+    continue
+  }
+
+  lappend tests $t
+}
+
+dg-runtest $tests "" "-fopenacc -foffload=metal -g0"
+
+dg-finish
+
