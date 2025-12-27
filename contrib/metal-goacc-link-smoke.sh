@@ -18,7 +18,7 @@ set -eu
 
 usage() {
   cat <<'EOF' >&2
-Usage: metal-goacc-link-smoke.sh --host XGCC --hostb DIR --offload-path DIR --libgomp-path DIR [--limit N] [--outdir DIR]
+Usage: metal-goacc-link-smoke.sh --host XGCC --hostb DIR --offload-path DIR --libgomp-path DIR [--limit N] [--outdir DIR] [--allow-undefined]
 EOF
   exit 2
 }
@@ -29,6 +29,7 @@ OFFLOAD_PATH=
 LIBGOMP_PATH=
 LIMIT=50
 OUTDIR=${TMPDIR:-/tmp}/metal-goacc-link-smoke
+ALLOW_UNDEFINED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,6 +39,7 @@ while [ $# -gt 0 ]; do
     --libgomp-path) LIBGOMP_PATH=$2; shift 2;;
     --limit) LIMIT=$2; shift 2;;
     --outdir) OUTDIR=$2; shift 2;;
+    --allow-undefined) ALLOW_UNDEFINED=1; shift 1;;
     -h|--help) usage;;
     *) echo "unknown arg: $1" >&2; usage;;
   esac
@@ -79,6 +81,7 @@ echo "HOSTB=$HOSTB" | tee -a "$LOG"
 echo "GCC_OFFLOAD_PATH=$GCC_OFFLOAD_PATH" | tee -a "$LOG"
 echo "OFFLOAD_TARGET_DEFAULT=$OFFLOAD_TARGET_DEFAULT" | tee -a "$LOG"
 echo "LIBRARY_PATH=$LIBRARY_PATH" | tee -a "$LOG"
+echo "ALLOW_UNDEFINED=$ALLOW_UNDEFINED" | tee -a "$LOG"
 echo | tee -a "$LOG"
 
 stub_main=$OUTDIR/__metal_goacc_stub_main.c
@@ -107,10 +110,14 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
   err=$OUTDIR/${base%.c}.err
 
   echo "=== $base" | tee -a "$LOG"
+  extra_ld=
+  if [ "$ALLOW_UNDEFINED" -eq 1 ]; then
+    extra_ld="-Wl,-undefined,dynamic_lookup"
+  fi
   if rg -q --no-messages --pcre2 '\bmain\s*\(' "$f" 2>/dev/null; then
-    cmd="$HOST -B$HOSTB -fopenacc -foffload=metal -O0 -g0 -o $out $f"
+    cmd="$HOST -B$HOSTB -fopenacc -foffload=metal -O0 -g0 $extra_ld -o $out $f"
   else
-    cmd="$HOST -B$HOSTB -fopenacc -foffload=metal -O0 -g0 -o $out $stub_main $f"
+    cmd="$HOST -B$HOSTB -fopenacc -foffload=metal -O0 -g0 $extra_ld -o $out $stub_main $f"
   fi
 
   # shellcheck disable=SC2086
@@ -122,6 +129,10 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
       echo "SKIP $base (needs double)" | tee -a "$LOG"
       skip=$((skip + 1))
       skip_needs_double=$((skip_needs_double + 1))
+    elif [ "$ALLOW_UNDEFINED" -eq 1 ] \
+      && rg -q --no-messages 'use of undeclared identifier' "$err"; then
+      echo "SKIP $base (device externs)" | tee -a "$LOG"
+      skip=$((skip + 1))
     elif rg -q --no-messages 'Undefined symbols for architecture|symbol\\(s\\) not found' "$err"; then
       echo "SKIP $base (not standalone)" | tee -a "$LOG"
       skip=$((skip + 1))
