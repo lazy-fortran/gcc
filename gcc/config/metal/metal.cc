@@ -810,7 +810,8 @@ metal_file_start (void)
   fputs ("#include <metal_stdlib>\n", asm_out_file);
   fputs ("using namespace metal;\n\n", asm_out_file);
   /* MSL doesn't provide libc; some device-side code paths reference abort().  */
-  fputs ("static inline void abort(void) { return; }\n\n", asm_out_file);
+  fputs ("static inline __attribute__((unused)) void abort(void) { return; }\n\n",
+	 asm_out_file);
 }
 
 /* Implement TARGET_ASM_FILE_END.  */
