@@ -88,6 +88,7 @@ struct metal_tdata
   const struct metal_obj *metal_objs;	/* Array of metallib objects.  */
   unsigned metal_num;			/* Count of metallib objects.  */
   const char *const *var_names;	/* Variable symbol table.  */
+  const uintptr_t *var_sizes;		/* Variable sizes in bytes.  */
   unsigned var_num;			/* Count of variables.  */
   const struct metal_fn_launch *fn_descs;	/* Kernel descriptors.  */
   unsigned fn_num;			/* Count of kernels.  */
@@ -100,6 +101,7 @@ struct metal_fn_descriptor
   MTL::Function *fn;		/* Metal kernel function.  */
   MTL::ComputePipelineState *pipeline;	/* Compiled compute pipeline.  */
   const struct metal_fn_launch *launch;	/* Launch configuration.  */
+  struct metal_image_data *image;	/* Owning image (for var buffers).  */
 };
 
 /* Loaded Metal image.  */
@@ -109,6 +111,8 @@ struct metal_image_data
   MTL::Library *library;		/* Loaded Metal library.  */
   struct metal_fn_descriptor *fns;	/* Array of kernel descriptors.  */
   unsigned fn_num;			/* Number of functions.  */
+  MTL::Buffer **var_buffers;		/* Device buffers for VAR_MAP entries.  */
+  unsigned var_num;			/* Number of variables.  */
   struct metal_image_data *next;	/* Linked list of images.  */
 };
 
@@ -370,7 +374,12 @@ GOMP_OFFLOAD_get_uid (int ord)
 unsigned int
 GOMP_OFFLOAD_get_caps (void)
 {
-  return GOMP_OFFLOAD_CAP_OPENACC_200;
+  /* libgomp's image loading and mapping infrastructure is shared between
+     OpenMP and OpenACC.  Even though OpenMP kernel execution is not yet
+     implemented for Metal (see GOMP_OFFLOAD_run), advertise OpenMP capability
+     so that images are loaded and host<->target mappings are established for
+     OpenACC regions.  */
+  return GOMP_OFFLOAD_CAP_OPENACC_200 | GOMP_OFFLOAD_CAP_OPENMP_400;
 }
 
 int
@@ -448,6 +457,24 @@ GOMP_OFFLOAD_fini_device (int ord)
 		img->fns[i].fn->release ();
 	    }
 	  free (img->fns);
+	}
+
+      /* Release image variable buffers.  */
+      if (img->var_buffers)
+	{
+	  for (unsigned j = 0; j < img->var_num; j++)
+	    {
+	      MTL::Buffer *b = img->var_buffers[j];
+	      if (!b)
+		continue;
+	      uintptr_t devptr = static_cast<uintptr_t> (b->gpuAddress ());
+	      pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+	      if (metal_devices[ord].buffers)
+		metal_remove_buffer (ord, reinterpret_cast<void *> (devptr));
+	      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+	      b->release ();
+	    }
+	  free (img->var_buffers);
 	}
 
       /* Release library.  */
@@ -584,6 +611,7 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   unsigned var_entries = img_header->var_num;
   const struct metal_fn_launch *fn_descs = img_header->fn_descs;
   const char *const *var_names = img_header->var_names;
+  const uintptr_t *var_sizes = img_header->var_sizes;
 
   /* Currently, other_entries contains only the struct of ICVs.  */
   unsigned other_entries = 1;
@@ -608,6 +636,8 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   new_image->library = library;
   new_image->fns = targ_fns;
   new_image->fn_num = fn_entries;
+  new_image->var_buffers = nullptr;
+  new_image->var_num = 0;
   new_image->next = nullptr;
 
   /* Load each kernel function and create compute pipeline.  */
@@ -705,18 +735,106 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
       targ_fns[i].fn = function;
       targ_fns[i].pipeline = pipeline;
       targ_fns[i].launch = &fn_descs[i];
+      targ_fns[i].image = new_image;
 
       /* Store in target table.  The address points to the descriptor.  */
       targ_tbl[i].start = (uintptr_t) &targ_fns[i];
       targ_tbl[i].end = targ_tbl[i].start + 1;
     }
 
-  /* Handle variables (for now, just mark as unavailable).  */
+  /* Handle variables by allocating a Metal buffer for each VAR_MAP entry.
+     This provides stable device addresses for OpenACC device_resident data.  */
+  if (var_entries)
+    {
+      new_image->var_buffers = (MTL::Buffer **) GOMP_PLUGIN_malloc (
+	  sizeof (MTL::Buffer *) * var_entries);
+      std::memset (new_image->var_buffers, 0,
+		   sizeof (MTL::Buffer *) * var_entries);
+      new_image->var_num = var_entries;
+    }
+
   for (unsigned j = 0; j < var_entries; j++)
     {
-      targ_tbl[fn_entries + j].start = 0;
-      targ_tbl[fn_entries + j].end = 0;
+      const char *name = var_names ? var_names[j] : nullptr;
+      uintptr_t sz = var_sizes ? var_sizes[j] : 0;
+      if (!name || sz == 0)
+	{
+	  targ_tbl[fn_entries + j].start = 0;
+	  targ_tbl[fn_entries + j].end = 0;
+	  continue;
+	}
+
+      MTL::Buffer *buffer = device->newBuffer (sz,
+					       MTL::ResourceStorageModeShared);
+      if (!buffer)
+	goto var_fail;
+
+      MTL::GPUAddress gpu = buffer->gpuAddress ();
+      if (!gpu)
+	{
+	  buffer->release ();
+	  goto var_fail;
+	}
+
+      /* Initialize to zero to match the common "={0}" pattern in emitted MSL
+	 for device_resident locals.  */
+      void *contents = buffer->contents ();
+      if (contents)
+	std::memset (contents, 0, sz);
+
+      uintptr_t devptr = static_cast<uintptr_t> (gpu);
+      pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+      bool ok = metal_devices[ord].buffers && metal_add_buffer (ord, devptr,
+								buffer);
+      pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+      if (!ok)
+	{
+	  buffer->release ();
+	  goto var_fail;
+	}
+
+      new_image->var_buffers[j] = buffer;
+      targ_tbl[fn_entries + j].start = devptr;
+      targ_tbl[fn_entries + j].end = devptr + sz;
     }
+
+  goto var_done;
+
+var_fail:
+  /* Clean up already-loaded functions/pipelines.  */
+  for (unsigned k = 0; k < fn_entries; k++)
+    {
+      if (targ_fns[k].pipeline)
+	targ_fns[k].pipeline->release ();
+      if (targ_fns[k].fn)
+	targ_fns[k].fn->release ();
+    }
+  /* Clean up variable buffers allocated so far.  */
+  if (new_image->var_buffers)
+    {
+      for (unsigned k = 0; k < var_entries; k++)
+	{
+	  MTL::Buffer *b = new_image->var_buffers[k];
+	  if (!b)
+	    continue;
+
+	  uintptr_t devptr = static_cast<uintptr_t> (b->gpuAddress ());
+	  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+	  if (metal_devices[ord].buffers)
+	    metal_remove_buffer (ord, reinterpret_cast<void *> (devptr));
+	  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+	  b->release ();
+	}
+      free (new_image->var_buffers);
+    }
+
+  library->release ();
+  free (new_image);
+  free (targ_fns);
+  free (targ_tbl);
+  return -1;
+
+var_done:
 
   /* Provide the required extra ICV entry.  Metal does not yet provide a
      device-side libgomp implementation, so just mark it as unavailable.  */
@@ -783,6 +901,24 @@ GOMP_OFFLOAD_unload_image (int ord, unsigned version, const void *target_data)
 	  /* Release library.  */
 	  if (img->library)
 	    img->library->release ();
+
+	  /* Release image variable buffers.  */
+	  if (img->var_buffers)
+	    {
+	      for (unsigned j = 0; j < img->var_num; j++)
+		{
+		  MTL::Buffer *b = img->var_buffers[j];
+		  if (!b)
+		    continue;
+		  uintptr_t devptr = static_cast<uintptr_t> (b->gpuAddress ());
+		  pthread_mutex_lock (&metal_devices[ord].buffer_lock);
+		  if (metal_devices[ord].buffers)
+		    metal_remove_buffer (ord, reinterpret_cast<void *> (devptr));
+		  pthread_mutex_unlock (&metal_devices[ord].buffer_lock);
+		  b->release ();
+		}
+	      free (img->var_buffers);
+	    }
 
 	  free (img);
 	  pthread_mutex_unlock (&metal_devices[ord].image_lock);
@@ -1385,6 +1521,21 @@ metal_bind_kernel_arguments (MTL::ComputeCommandEncoder *enc, int ord,
   enc->setBuffer (args_buffer, offset, 0);
 }
 
+/* Bind image-scope variable buffers to kernel arguments starting at buffer(1).
+   Metal kernels generated for OpenACC may include these extra parameters for
+   device_resident data.  */
+static void
+metal_bind_image_var_buffers (MTL::ComputeCommandEncoder *enc,
+			      struct metal_image_data *img)
+{
+  if (!img || !img->var_buffers)
+    return;
+
+  for (unsigned j = 0; j < img->var_num; j++)
+    if (img->var_buffers[j])
+      enc->setBuffer (img->var_buffers[j], 0, j + 1);
+}
+
 /* Execute a Metal kernel with the specified dimensions.
 
    Parameters:
@@ -1478,6 +1629,7 @@ metal_exec (int ord, struct metal_fn_descriptor *fn_desc, void *dp,
   /* Set compute pipeline state and bind arguments.  */
   enc->setComputePipelineState (fn_desc->pipeline);
   metal_bind_kernel_arguments (enc, ord, dp, cmd);
+  metal_bind_image_var_buffers (enc, fn_desc->image);
 
   /* Configure thread execution and dispatch.  */
   MTL::Size threadgroup_size = MTL::Size::Make (vectors, workers, 1);

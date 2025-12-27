@@ -54,6 +54,34 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #ifdef CRT_BEGIN
 
+#if OBJECT_FORMAT_MACHO
+/* For Mach-O, a "zero-length" definition ends up emitting a single byte in
+   the section, which breaks the expected layout of the offload tables (they
+   must be pairs of (address,size) without leading padding).  Define the start
+   symbols as section labels that do not emit any bytes.  */
+#define STRINGIFY_1(x) #x
+#define STRINGIFY(x) STRINGIFY_1(x)
+#define MACHO_DEFINE_OFFLOAD_LABEL(sym, section_name)			\
+  __asm__ (".section " section_name "\n"				\
+	   ".globl _" STRINGIFY (sym) "\n"				\
+	   ".private_extern _" STRINGIFY (sym) "\n"			\
+	   ".no_dead_strip _" STRINGIFY (sym) "\n"			\
+	   "_" STRINGIFY (sym) ":\n"					\
+	   ".text\n");
+
+MACHO_DEFINE_OFFLOAD_LABEL (__offload_func_table,
+			    OFFLOAD_FUNC_TABLE_SECTION_NAME)
+MACHO_DEFINE_OFFLOAD_LABEL (__offload_var_table,
+			    OFFLOAD_VAR_TABLE_SECTION_NAME)
+MACHO_DEFINE_OFFLOAD_LABEL (__offload_ind_func_table,
+			    OFFLOAD_IND_FUNC_TABLE_SECTION_NAME)
+
+#undef MACHO_DEFINE_OFFLOAD_LABEL
+#undef STRINGIFY
+#undef STRINGIFY_1
+
+#else
+
 const void *const __offload_func_table[0]
   __attribute__ ((__used__, visibility ("hidden"),
 		  section (OFFLOAD_FUNC_TABLE_SECTION_NAME))) = { };
@@ -64,7 +92,36 @@ const void *const __offload_ind_func_table[0]
   __attribute__ ((__used__, visibility ("hidden"),
 		  section (OFFLOAD_IND_FUNC_TABLE_SECTION_NAME))) = { };
 
+#endif /* !OBJECT_FORMAT_MACHO */
+
 #elif defined CRT_END
+
+#if OBJECT_FORMAT_MACHO
+/* Similarly, define the end markers as section labels without emitting bytes.
+   These startfiles are linked after the program objects, so the symbol value
+   equals the end of the accumulated section contents.  */
+#define STRINGIFY_1(x) #x
+#define STRINGIFY(x) STRINGIFY_1(x)
+#define MACHO_DEFINE_OFFLOAD_LABEL(sym, section_name)			\
+  __asm__ (".section " section_name "\n"				\
+	   ".globl _" STRINGIFY (sym) "\n"				\
+	   ".private_extern _" STRINGIFY (sym) "\n"			\
+	   ".no_dead_strip _" STRINGIFY (sym) "\n"			\
+	   "_" STRINGIFY (sym) ":\n"					\
+	   ".text\n");
+
+MACHO_DEFINE_OFFLOAD_LABEL (__offload_funcs_end,
+			    OFFLOAD_FUNC_TABLE_SECTION_NAME)
+MACHO_DEFINE_OFFLOAD_LABEL (__offload_vars_end,
+			    OFFLOAD_VAR_TABLE_SECTION_NAME)
+MACHO_DEFINE_OFFLOAD_LABEL (__offload_ind_funcs_end,
+			    OFFLOAD_IND_FUNC_TABLE_SECTION_NAME)
+
+#undef MACHO_DEFINE_OFFLOAD_LABEL
+#undef STRINGIFY
+#undef STRINGIFY_1
+
+#else
 
 const void *const __offload_funcs_end[0]
   __attribute__ ((__used__, visibility ("hidden"),
@@ -75,6 +132,8 @@ const void *const __offload_vars_end[0]
 const void *const __offload_ind_funcs_end[0]
   __attribute__ ((__used__, visibility ("hidden"),
 		  section (OFFLOAD_IND_FUNC_TABLE_SECTION_NAME))) = { };
+
+#endif /* !OBJECT_FORMAT_MACHO */
 
 #elif defined CRT_TABLE
 
