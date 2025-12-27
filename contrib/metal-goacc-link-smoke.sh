@@ -68,6 +68,11 @@ LOG=$OUTDIR/summary.log
 export GCC_OFFLOAD_PATH="$OFFLOAD_PATH"
 export OFFLOAD_TARGET_DEFAULT="$OFFLOAD_PATH/bin/aarch64-apple-darwin25.2.0-accel-metal-none-none-gcc"
 export LIBRARY_PATH="$LIBGOMP_PATH"
+if [ "$ALLOW_UNDEFINED" -eq 1 ]; then
+  export METAL_MKOFFLOAD_STUB_UNDECL=1
+else
+  unset METAL_MKOFFLOAD_STUB_UNDECL || true
+fi
 
 pass=0
 fail=0
@@ -82,6 +87,7 @@ echo "GCC_OFFLOAD_PATH=$GCC_OFFLOAD_PATH" | tee -a "$LOG"
 echo "OFFLOAD_TARGET_DEFAULT=$OFFLOAD_TARGET_DEFAULT" | tee -a "$LOG"
 echo "LIBRARY_PATH=$LIBRARY_PATH" | tee -a "$LOG"
 echo "ALLOW_UNDEFINED=$ALLOW_UNDEFINED" | tee -a "$LOG"
+echo "METAL_MKOFFLOAD_STUB_UNDECL=${METAL_MKOFFLOAD_STUB_UNDECL:-0}" | tee -a "$LOG"
 echo | tee -a "$LOG"
 
 stub_main=$OUTDIR/__metal_goacc_stub_main.c

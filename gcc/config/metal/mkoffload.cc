@@ -251,6 +251,8 @@ record_id (const char *p1, id_map ***where)
 /* Forward declaration.  */
 static void compile_metal (const char *, const char *);
 static void rewrite_msl_control_flow (const char *);
+static void fixup_msl_locals_and_addresses (const char *);
+static void maybe_stub_undeclared_identifiers (const char *);
 
 /* Read the whole input file.  It will be NUL terminated.  */
 
@@ -925,6 +927,7 @@ rewrite_msl_control_flow (const char *msl_file)
 
   if (changed)
     {
+      obstack_1grow (&out_obstack, '\0');
       const char *outbuf = (const char *) obstack_finish (&out_obstack);
       FILE *outf = fopen (msl_file, "w");
       if (!outf)
@@ -941,6 +944,640 @@ rewrite_msl_control_flow (const char *msl_file)
   free (input);
 }
 
+static bool
+is_ident_start (char c)
+{
+  return (c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+}
+
+static bool
+is_ident_char (char c)
+{
+  return is_ident_start (c) || (c >= '0' && c <= '9') || c == '$';
+}
+
+static bool
+is_keyword_name (const char *name, size_t len)
+{
+  /* Keep this small and conservative.  */
+  static const char *const kws[] = {
+    "if", "for", "while", "switch", "return",
+    "static_cast", "reinterpret_cast",
+    "kernel", "constant", "device", "threadgroup",
+    "abort"
+  };
+  for (size_t i = 0; i < ARRAY_SIZE (kws); i++)
+    {
+      const char *kw = kws[i];
+      if (strlen (kw) == len && strncmp (name, kw, len) == 0)
+	return true;
+    }
+  return false;
+}
+
+static bool
+is_constpool_label_name (const char *name, size_t len)
+{
+  if (len < 3)
+    return false;
+  if (name[0] != 'L' || name[1] != 'C')
+    return false;
+  for (size_t i = 2; i < len; i++)
+    if (name[i] < '0' || name[i] > '9')
+      return false;
+  return true;
+}
+
+/* When enabled via METAL_MKOFFLOAD_STUB_UNDECL=1, try to keep the Metal toolchain
+   moving by injecting stub decls for undeclared identifiers that appear in the
+   lowered MSL (typically due to non-standalone tests referencing extern symbols).
+   This is intentionally a best-effort hack for bring-up.  */
+static void
+maybe_stub_undeclared_identifiers (const char *msl_file)
+{
+  const char *env = getenv ("METAL_MKOFFLOAD_STUB_UNDECL");
+  if (!env || env[0] != '1')
+    return;
+
+  FILE *in = fopen (msl_file, "r");
+  if (!in)
+    fatal_error (input_location, "opening %s: %m", msl_file);
+  size_t len = 0;
+  const char *buf = read_file (in, &len);
+  fclose (in);
+
+  if (strstr (buf, "// mkoffload: stubs for undeclared identifiers") != NULL)
+    {
+      free (CONST_CAST (char *, buf));
+      return;
+    }
+
+  /* Collect names seen in simple call contexts:  name();  */
+  auto_vec<char *> call_names;
+  auto_vec<char *> var_names;
+
+  const char *p = buf;
+  while (*p)
+    {
+      if (!is_ident_start (*p))
+	{
+	  p++;
+	  continue;
+	}
+
+      const char *start = p;
+      p++;
+      while (is_ident_char (*p))
+	p++;
+      size_t n = p - start;
+      if (n == 0)
+	continue;
+      if (n >= 4 && strncmp (start, "_reg", 4) == 0)
+	continue;
+      if (is_constpool_label_name (start, n))
+	continue;
+      if (is_keyword_name (start, n))
+	continue;
+
+      const char *q = p;
+      while (*q == ' ' || *q == '\t' || *q == '\r')
+	q++;
+
+      bool is_call0 = false;
+      if (*q == '(')
+	{
+	  q++;
+	  while (*q == ' ' || *q == '\t' || *q == '\r')
+	    q++;
+	  if (*q == ')')
+	    is_call0 = true;
+	}
+
+      bool is_cast_deref = false;
+      if (!is_call0)
+	{
+	  /* Look for:  *)name  (as in *(device T*)name).  */
+	  const char *r = start;
+	  while (r > buf && (r[-1] == ' ' || r[-1] == '\t' || r[-1] == '\r'))
+	    r--;
+	  if (r - buf >= 2 && r[-1] == ')' && r[-2] == '*')
+	    is_cast_deref = true;
+	}
+
+      bool is_simple_intptr_rhs = false;
+      if (!is_call0 && !is_cast_deref)
+	{
+	  /* Look for simple RHS uses that are very likely pointer-ish temporaries
+	     lowered into an int64 slot, e.g.:
+	       *(device int64_t*)(...) = name;
+	     This is a bring-up hack to keep non-standalone tests compiling.  */
+	  const char *after = q;
+	  while (*after == ' ' || *after == '\t' || *after == '\r')
+	    after++;
+	  if (*after == ';')
+	    {
+	      const char *ls = start;
+	      while (ls > buf && ls[-1] != '\n')
+		ls--;
+	      const char *le = start;
+	      while (*le && *le != '\n')
+		le++;
+	      if (memchr (ls, '=', (size_t) (le - ls)) != NULL)
+		{
+		  const char *tgt = strstr (ls, "*(device int64_t*)");
+		  if (tgt && tgt < le)
+		    is_simple_intptr_rhs = true;
+		}
+	    }
+	}
+
+      /* Skip if it looks like we're already in a declaration.  */
+      {
+	char needle[256];
+	if (n < sizeof needle)
+	  {
+	    memcpy (needle, start, n);
+	    needle[n] = 0;
+	    char pat1[300], pat2[300], pat3[300];
+	    snprintf (pat1, sizeof pat1, "kernel void %s", needle);
+	    snprintf (pat2, sizeof pat2, "static inline %s", needle);
+	    snprintf (pat3, sizeof pat3, "constant %s", needle);
+	    if (strstr (buf, pat1) != NULL
+		|| strstr (buf, pat2) != NULL
+		|| strstr (buf, pat3) != NULL)
+	      continue;
+	  }
+      }
+
+      char *name = XNEWVEC (char, n + 1);
+      memcpy (name, start, n);
+      name[n] = '\0';
+
+      if (is_call0)
+	call_names.safe_push (name);
+      else if (is_cast_deref)
+	var_names.safe_push (name);
+      else if (is_simple_intptr_rhs)
+	var_names.safe_push (name);
+      else
+	free (name);
+    }
+
+  if (call_names.is_empty () && var_names.is_empty ())
+    {
+      free (CONST_CAST (char *, buf));
+      return;
+    }
+
+  auto is_decl_keyword = [&] (const char *name, size_t n) -> bool {
+    /* Qualifiers / storage.  */
+    if ((n == 5 && strncmp (name, "const", 5) == 0)
+	|| (n == 8 && strncmp (name, "volatile", 8) == 0)
+	|| (n == 6 && strncmp (name, "static", 6) == 0)
+	|| (n == 6 && strncmp (name, "inline", 6) == 0)
+	|| (n == 6 && strncmp (name, "kernel", 6) == 0)
+	|| (n == 6 && strncmp (name, "device", 6) == 0)
+	|| (n == 8 && strncmp (name, "constant", 8) == 0)
+	|| (n == 11 && strncmp (name, "threadgroup", 11) == 0)
+	|| (n == 6 && strncmp (name, "thread", 6) == 0))
+      return true;
+
+    /* Common scalar types.  */
+    if ((n == 4 && strncmp (name, "void", 4) == 0)
+	|| (n == 4 && strncmp (name, "char", 4) == 0)
+	|| (n == 5 && strncmp (name, "short", 5) == 0)
+	|| (n == 3 && strncmp (name, "int", 3) == 0)
+	|| (n == 4 && strncmp (name, "long", 4) == 0)
+	|| (n == 5 && strncmp (name, "uchar", 5) == 0)
+	|| (n == 6 && strncmp (name, "ushort", 6) == 0)
+	|| (n == 4 && strncmp (name, "uint", 4) == 0)
+	|| (n == 5 && strncmp (name, "ulong", 5) == 0)
+	|| (n == 5 && strncmp (name, "float", 5) == 0)
+	|| (n == 4 && strncmp (name, "half", 4) == 0)
+	|| (n == 4 && strncmp (name, "bool", 4) == 0)
+	|| (n == 6 && strncmp (name, "size_t", 6) == 0))
+      return true;
+
+    /* Composite types.  */
+    if ((n == 6 && strncmp (name, "struct", 6) == 0)
+	|| (n == 4 && strncmp (name, "enum", 4) == 0))
+      return true;
+
+    return false;
+  };
+
+  auto has_decl_or_def = [&] (const char *name) -> bool {
+    size_t n = strlen (name);
+    const char *p = buf;
+    while (*p)
+      {
+	if (!is_ident_start (*p))
+	  {
+	    p++;
+	    continue;
+	  }
+
+	const char *start = p;
+	p++;
+	while (is_ident_char (*p))
+	  p++;
+
+	if ((size_t) (p - start) != n || strncmp (start, name, n) != 0)
+	  continue;
+
+	/* Check for a function-like occurrence: name(...).  */
+	const char *q = p;
+	while (*q == ' ' || *q == '\t' || *q == '\r')
+	  q++;
+	if (*q != '(')
+	  continue;
+
+	/* Decide based on the first token on this line.  If it's a likely
+	   declaration/definition keyword/type, avoid injecting a stub that would
+	   collide with a real definition (e.g. "void NAME()").  */
+	const char *ls = start;
+	while (ls > buf && ls[-1] != '\n')
+	  ls--;
+	while (*ls == ' ' || *ls == '\t' || *ls == '\r')
+	  ls++;
+	if (startswith (ls, "//") || startswith (ls, "/*"))
+	  continue;
+	if (!is_ident_start (*ls))
+	  continue;
+	const char *tok = ls;
+	tok++;
+	while (is_ident_char (*tok))
+	  tok++;
+	size_t tlen = tok - ls;
+	if (tlen == n && strncmp (ls, name, n) == 0)
+	  continue;
+	if (is_decl_keyword (ls, tlen))
+	  return true;
+      }
+    return false;
+  };
+
+  /* Build injected text.  */
+  struct obstack stub_obstack;
+  obstack_init (&stub_obstack);
+  obstack_grow (&stub_obstack, "\n// mkoffload: stubs for undeclared identifiers\n",
+		strlen ("\n// mkoffload: stubs for undeclared identifiers\n"));
+
+  auto vec_contains = [] (const auto_vec<char *> &v, const char *s) -> bool {
+    for (unsigned i = 0; i < v.length (); i++)
+      if (strcmp (v[i], s) == 0)
+	return true;
+    return false;
+  };
+
+  auto emit_stub = [&] (auto_vec<char *> &seen, const char *s, bool is_call) {
+    if (vec_contains (seen, s))
+      return;
+    seen.safe_push (CONST_CAST (char *, s));
+    if (is_call)
+      {
+	obstack_grow (&stub_obstack, "static inline long ", strlen ("static inline long "));
+	obstack_grow (&stub_obstack, s, strlen (s));
+	obstack_grow (&stub_obstack, "(void) { return 0; }\n",
+		      strlen ("(void) { return 0; }\n"));
+      }
+    else
+      {
+	obstack_grow (&stub_obstack, "constant ulong ", strlen ("constant ulong "));
+	obstack_grow (&stub_obstack, s, strlen (s));
+	obstack_grow (&stub_obstack, " = 0;\n", strlen (" = 0;\n"));
+      }
+  };
+
+  auto_vec<char *> seen;
+  for (unsigned i = 0; i < call_names.length (); i++)
+    if (!has_decl_or_def (call_names[i]))
+      emit_stub (seen, call_names[i], true);
+  for (unsigned i = 0; i < var_names.length (); i++)
+    if (!has_decl_or_def (var_names[i]))
+      emit_stub (seen, var_names[i], false);
+
+  obstack_1grow (&stub_obstack, '\0');
+  const char *stub_text = (const char *) obstack_finish (&stub_obstack);
+
+  /* Insert stubs before the first kernel function.  */
+  const char *best = NULL;
+
+  auto consider = [&] (const char *hit) {
+    if (!hit)
+      return;
+    const char *ls = hit;
+    while (ls > buf && ls[-1] != '\n')
+      ls--;
+    /* Skip leading whitespace.  */
+    while (*ls == ' ' || *ls == '\t' || *ls == '\r')
+      ls++;
+    /* Ignore helper decls like "static inline void ...".  */
+    if (startswith (ls, "static ") || startswith (ls, "inline ")
+	|| startswith (ls, "static inline "))
+      return;
+    if (!(startswith (ls, "kernel void ") || startswith (ls, "void ")))
+      return;
+    if (!best || ls < best)
+      best = ls;
+  };
+
+  for (const char *s = buf; (s = strstr (s, "kernel void ")) != NULL; s++)
+    consider (s);
+  for (const char *s = buf; (s = strstr (s, "void ")) != NULL; s++)
+    consider (s);
+
+  if (!best)
+    {
+      obstack_free (&stub_obstack, NULL);
+      for (unsigned i = 0; i < call_names.length (); i++)
+	free (call_names[i]);
+      for (unsigned i = 0; i < var_names.length (); i++)
+	free (var_names[i]);
+      free (CONST_CAST (char *, buf));
+      return;
+    }
+
+  /* Back up to the start of the line so we don't split tokens.  */
+  const char *line_start = best;
+  while (line_start > buf && line_start[-1] != '\n')
+    line_start--;
+  size_t prefix_len = (size_t) (line_start - buf);
+
+  struct obstack out_obstack;
+  obstack_init (&out_obstack);
+  obstack_grow (&out_obstack, buf, prefix_len);
+  obstack_grow (&out_obstack, stub_text, strlen (stub_text));
+  obstack_grow (&out_obstack, line_start, strlen (line_start));
+
+  obstack_1grow (&out_obstack, '\0');
+  const char *outbuf = (const char *) obstack_finish (&out_obstack);
+  FILE *outf = fopen (msl_file, "w");
+  if (!outf)
+    fatal_error (input_location, "writing %s: %m", msl_file);
+  fwrite (outbuf, 1, strlen (outbuf), outf);
+  fclose (outf);
+
+  obstack_free (&out_obstack, NULL);
+  obstack_free (&stub_obstack, NULL);
+  for (unsigned i = 0; i < call_names.length (); i++)
+    free (call_names[i]);
+  for (unsigned i = 0; i < var_names.length (); i++)
+    free (var_names[i]);
+  free (CONST_CAST (char *, buf));
+}
+
+static const char *
+find_first_real_function_line (const char *buf)
+{
+  const char *best = NULL;
+
+  auto consider = [&] (const char *hit) {
+    if (!hit)
+      return;
+    const char *ls = hit;
+    while (ls > buf && ls[-1] != '\n')
+      ls--;
+    /* Skip leading whitespace.  */
+    while (*ls == ' ' || *ls == '\t' || *ls == '\r')
+      ls++;
+    /* Ignore helper decls like "static inline void ...".  */
+    if (startswith (ls, "static ") || startswith (ls, "inline ")
+	|| startswith (ls, "static inline "))
+      return;
+    if (!(startswith (ls, "kernel void ") || startswith (ls, "void ")))
+      return;
+    if (!best || ls < best)
+      best = ls;
+  };
+
+  for (const char *s = buf; (s = strstr (s, "kernel void ")) != NULL; s++)
+    consider (s);
+  for (const char *s = buf; (s = strstr (s, "void ")) != NULL; s++)
+    consider (s);
+
+  if (!best)
+    return NULL;
+
+  const char *line_start = best;
+  while (line_start > buf && line_start[-1] != '\n')
+    line_start--;
+  return line_start;
+}
+
+/* Fix up a couple of patterns that clang/Metal rejects:
+
+   1) Trailing "Local variable:" constant decls are emitted after functions, but
+      referenced inside kernels.  Hoist them to before the first function.
+   2) Some lowered code assigns a constant char array name into an int64 slot,
+      which needs an explicit cast to an integer address value.  */
+static void
+fixup_msl_locals_and_addresses (const char *msl_file)
+{
+  FILE *in = fopen (msl_file, "r");
+  if (!in)
+    fatal_error (input_location, "opening %s: %m", msl_file);
+  size_t len = 0;
+  const char *buf = read_file (in, &len);
+  fclose (in);
+
+  if (strstr (buf, "// mkoffload: hoisted local variable decls") != NULL)
+    {
+      free (CONST_CAST (char *, buf));
+      return;
+    }
+
+  const char *insert_at = find_first_real_function_line (buf);
+  if (!insert_at)
+    {
+      free (CONST_CAST (char *, buf));
+      return;
+    }
+
+  auto vec_contains = [] (const auto_vec<char *> &v, const char *s) -> bool {
+    for (unsigned i = 0; i < v.length (); i++)
+      if (strcmp (v[i], s) == 0)
+	return true;
+    return false;
+  };
+
+  auto_vec<char *> char_arrays;
+  /* Collect constant char array names.  */
+  for (const char *p = buf; *p;)
+    {
+      const char *ls = p;
+      const char *le = p;
+      while (*le && *le != '\n')
+	le++;
+      p = *le ? le + 1 : le;
+
+      /* Quick filter: most lines won't match.  */
+      if (strstr (ls, "constant") == NULL || strstr (ls, " char ") == NULL)
+	continue;
+
+      const char *c = strstr (ls, " char ");
+      if (!c || c >= le)
+	continue;
+      c += strlen (" char ");
+      if (!is_ident_start (*c))
+	continue;
+      const char *ns = c;
+      c++;
+      while (is_ident_char (*c))
+	c++;
+      if (*c != '[')
+	continue;
+
+      size_t n = (size_t) (c - ns);
+      char *name = XNEWVEC (char, n + 1);
+      memcpy (name, ns, n);
+      name[n] = '\0';
+      if (!vec_contains (char_arrays, name))
+	char_arrays.safe_push (name);
+      else
+	free (name);
+    }
+
+  struct obstack hoist_obstack;
+  struct obstack out_obstack;
+  obstack_init (&hoist_obstack);
+  obstack_grow (&hoist_obstack,
+		"\n// mkoffload: hoisted local variable decls\n",
+		strlen ("\n// mkoffload: hoisted local variable decls\n"));
+
+  bool changed = false;
+  bool hoisted_any = false;
+
+  /* First pass: collect trailing local decls for hoisting.  */
+  for (const char *p = buf; *p;)
+    {
+      const char *ls = p;
+      const char *le = p;
+      while (*le && *le != '\n')
+	le++;
+      p = *le ? le + 1 : le;
+
+      if (ls < insert_at || !startswith (ls, "// Local variable:"))
+	continue;
+
+      const char *ls2 = p;
+      const char *le2 = p;
+      while (*le2 && *le2 != '\n')
+	le2++;
+
+      if (!startswith (ls2, "constant /* local */ char "))
+	continue;
+
+      obstack_grow (&hoist_obstack, ls, (size_t) (le - ls));
+      obstack_1grow (&hoist_obstack, '\n');
+      obstack_grow (&hoist_obstack, ls2, (size_t) (le2 - ls2));
+      obstack_1grow (&hoist_obstack, '\n');
+      hoisted_any = true;
+      changed = true;
+
+      /* Skip the decl line too.  */
+      p = *le2 ? le2 + 1 : le2;
+    }
+
+  obstack_init (&out_obstack);
+
+  /* Second pass: write output, skipping hoisted decls and rewriting a couple of
+     invalid constructs.  */
+  const char *p = buf;
+  while (*p)
+    {
+      const char *ls = p;
+      const char *le = p;
+      while (*le && *le != '\n')
+	le++;
+      p = *le ? le + 1 : le;
+
+      if (ls == insert_at && hoisted_any)
+	{
+	  const char *ht = (const char *) obstack_base (&hoist_obstack);
+	  size_t hlen = (size_t) ((const char *) obstack_next_free (&hoist_obstack) - ht);
+	  obstack_grow (&out_obstack, ht, hlen);
+	}
+
+      /* Skip local decl blocks that we hoisted.  */
+      if (ls >= insert_at && startswith (ls, "// Local variable:"))
+	{
+	  const char *ls2 = p;
+	  const char *le2 = p;
+	  while (*le2 && *le2 != '\n')
+	    le2++;
+
+	  if (startswith (ls2, "constant /* local */ char "))
+	    {
+	      changed = true;
+	      p = *le2 ? le2 + 1 : le2;
+	      continue;
+	    }
+	}
+
+      /* Rewrite:  *(device int64_t*)(...) = <char-array>;
+	 into:      *(device int64_t*)(...) = (ulong)(&<char-array>[0]);  */
+      const char *tgt = strstr (ls, "*(device int64_t*)");
+      if (tgt && tgt < le)
+	{
+	  const char *eq = strchr (ls, '=');
+	  if (eq && eq < le)
+	    {
+	      const char *rhs = eq + 1;
+	      while (rhs < le && (*rhs == ' ' || *rhs == '\t' || *rhs == '\r'))
+		rhs++;
+	      const char *rhs_id_end = rhs;
+	      while (rhs_id_end < le && is_ident_char (*rhs_id_end))
+		rhs_id_end++;
+	      const char *rhs_ws = rhs_id_end;
+	      while (rhs_ws < le && (*rhs_ws == ' ' || *rhs_ws == '\t' || *rhs_ws == '\r'))
+		rhs_ws++;
+
+	      if (rhs < rhs_id_end && rhs_ws < le && *rhs_ws == ';')
+		{
+		  size_t n = (size_t) (rhs_id_end - rhs);
+		  char namebuf[256];
+		  if (n < sizeof namebuf)
+		    {
+		      memcpy (namebuf, rhs, n);
+		      namebuf[n] = 0;
+		      if (vec_contains (char_arrays, namebuf))
+			{
+			  obstack_grow (&out_obstack, ls, (size_t) ((eq + 1) - ls));
+			  obstack_grow (&out_obstack, " (ulong)(&", strlen (" (ulong)(&"));
+			  obstack_grow (&out_obstack, namebuf, strlen (namebuf));
+			  obstack_grow (&out_obstack, "[0]);", strlen ("[0]);"));
+			  obstack_1grow (&out_obstack, '\n');
+			  changed = true;
+			  continue;
+			}
+		    }
+		}
+	    }
+	}
+
+      obstack_grow (&out_obstack, ls, (size_t) (le - ls));
+      obstack_1grow (&out_obstack, '\n');
+    }
+
+  if (changed)
+    {
+      obstack_1grow (&out_obstack, '\0');
+      const char *outbuf = (const char *) obstack_finish (&out_obstack);
+      FILE *outf = fopen (msl_file, "w");
+      if (!outf)
+	fatal_error (input_location, "writing %s: %m", msl_file);
+      fwrite (outbuf, 1, strlen (outbuf), outf);
+      fclose (outf);
+    }
+
+  obstack_free (&out_obstack, NULL);
+  obstack_free (&hoist_obstack, NULL);
+  for (unsigned i = 0; i < char_arrays.length (); i++)
+    free (char_arrays[i]);
+  free (CONST_CAST (char *, buf));
+}
+
 /* Compile MSL to metallib using Metal toolchain.  */
 
 static void
@@ -951,6 +1588,8 @@ compile_metal (const char *msl_file, const char *metallib_file)
 
   /* Rewrite labels/goto into switch-based control flow.  */
   rewrite_msl_control_flow (msl_file);
+  fixup_msl_locals_and_addresses (msl_file);
+  maybe_stub_undeclared_identifiers (msl_file);
 
   /* Compile .metal to .air.  */
   struct obstack argv_obstack;
