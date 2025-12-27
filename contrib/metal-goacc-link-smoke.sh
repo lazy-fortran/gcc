@@ -54,8 +54,10 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd -P)
-GOACC_DIR=$ROOT/gcc/testsuite/c-c++-common/goacc
-test -d "$GOACC_DIR" || { echo "error: missing $GOACC_DIR" >&2; exit 1; }
+GOACC_DIR1=$ROOT/gcc/testsuite/c-c++-common/goacc
+GOACC_DIR2=$ROOT/gcc/testsuite/gcc.dg/goacc
+test -d "$GOACC_DIR1" || { echo "error: missing $GOACC_DIR1" >&2; exit 1; }
+test -d "$GOACC_DIR2" || { echo "error: missing $GOACC_DIR2" >&2; exit 1; }
 
 mkdir -p "$OUTDIR"
 LOG=$OUTDIR/summary.log
@@ -78,7 +80,7 @@ echo | tee -a "$LOG"
 
 # Candidate sources: contain a main(), and avoid double/long double/_Complex.
 # (Many tests use the GNU style `int` on one line and `main(...)` on the next.)
-for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*main[[:space:]]*\(' "$GOACC_DIR" | sort); do
+for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*main[[:space:]]*\(' "$GOACC_DIR1" "$GOACC_DIR2" | sort); do
   if rg -q --no-messages '\blong[[:space:]]+double\b' "$f"; then
     continue
   fi
