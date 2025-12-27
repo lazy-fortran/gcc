@@ -94,10 +94,6 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
   if rg -q --no-messages '_Complex' "$f"; then
     continue
   fi
-  # Skip obvious double-precision literals like `1.0` (no `f`/`F` suffix).
-  if rg -q --no-messages --pcre2 '(?<![A-Za-z0-9_])(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?(?![A-Za-z0-9_]|[fF])' "$f"; then
-    continue
-  fi
   # Skip tests that are explicitly checking for diagnostics.
   if rg -q --no-messages 'dg-(error|warning|bogus)' "$f"; then
     continue
@@ -119,7 +115,9 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:sp
     echo "PASS $base" | tee -a "$LOG"
     pass=$((pass + 1))
   else
-    if rg -q --no-messages 'Undefined symbols for architecture|symbol\\(s\\) not found' "$err"; then
+    if rg -q --no-messages "'double' is not supported in Metal" "$err"; then
+      echo "SKIP $base (needs double)" | tee -a "$LOG"
+    elif rg -q --no-messages 'Undefined symbols for architecture|symbol\\(s\\) not found' "$err"; then
       echo "SKIP $base (not standalone)" | tee -a "$LOG"
     else
       echo "FAIL $base (see $err)" | tee -a "$LOG"

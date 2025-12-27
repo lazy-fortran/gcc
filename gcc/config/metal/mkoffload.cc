@@ -721,8 +721,12 @@ rewrite_msl_control_flow (const char *msl_file)
       }
 
       /* Function signature followed by an opening brace.  Signatures may span
-	 multiple lines (kernel parameter lists).  */
-      if (strstr (lines[i], "void ") != NULL)
+	 multiple lines (kernel parameter lists).
+
+	 Avoid matching single-line helper definitions that contain '{' (e.g.
+	 the MSL prelude may define inline helpers like abort()).  */
+      if (strstr (lines[i], "void ") != NULL
+	  && strchr (lines[i], '{') == NULL)
 	{
 	  size_t func_start = i;
 	  size_t brace_line = i + 1;
