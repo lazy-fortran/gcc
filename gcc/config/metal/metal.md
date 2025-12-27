@@ -88,7 +88,7 @@
 	(match_operand:QI 1 "general_operand"))]
   ""
 {
-  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+  if (MEM_P (operands[0]) && (MEM_P (operands[1]) || CONST_INT_P (operands[1])))
     {
       rtx tmp = gen_reg_rtx (QImode);
       emit_move_insn (tmp, operands[1]);
@@ -112,7 +112,7 @@
 	(match_operand:HI 1 "general_operand"))]
   ""
 {
-  if (MEM_P (operands[0]) && MEM_P (operands[1]))
+  if (MEM_P (operands[0]) && (MEM_P (operands[1]) || CONST_INT_P (operands[1])))
     {
       rtx tmp = gen_reg_rtx (HImode);
       emit_move_insn (tmp, operands[1]);

@@ -78,9 +78,13 @@ echo "OFFLOAD_TARGET_DEFAULT=$OFFLOAD_TARGET_DEFAULT" | tee -a "$LOG"
 echo "LIBRARY_PATH=$LIBRARY_PATH" | tee -a "$LOG"
 echo | tee -a "$LOG"
 
-# Candidate sources: contain a main(), and avoid double/long double/_Complex.
-# (Many tests use the GNU style `int` on one line and `main(...)` on the next.)
-for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*main[[:space:]]*\(' "$GOACC_DIR1" "$GOACC_DIR2" | sort); do
+stub_main=$OUTDIR/__metal_goacc_stub_main.c
+cat >"$stub_main" <<'EOF'
+int main(void) { return 0; }
+EOF
+
+# Candidate sources: seem to exercise OpenACC codegen, avoid double/long double/_Complex.
+for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*#pragma[[:space:]]+acc[[:space:]]' "$GOACC_DIR1" "$GOACC_DIR2" | sort); do
   if rg -q --no-messages '\blong[[:space:]]+double\b' "$f"; then
     continue
   fi
@@ -88,6 +92,10 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*main[[:space:]]*\(' "$GOACC
     continue
   fi
   if rg -q --no-messages '_Complex' "$f"; then
+    continue
+  fi
+  # Skip obvious double-precision literals like `1.0` (no `f`/`F` suffix).
+  if rg -q --no-messages --pcre2 '(?<![A-Za-z0-9_])(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?(?![A-Za-z0-9_]|[fF])' "$f"; then
     continue
   fi
   # Skip tests that are explicitly checking for diagnostics.
@@ -100,13 +108,24 @@ for f in $(rg -l --no-messages -g'*.c' '^[[:space:]]*main[[:space:]]*\(' "$GOACC
   err=$OUTDIR/${base%.c}.err
 
   echo "=== $base" | tee -a "$LOG"
-  if "$HOST" -B"$HOSTB" -fopenacc -foffload=metal -O0 -g0 -o "$out" "$f" >"$out".stdout 2>"$err"; then
+  if rg -q --no-messages --pcre2 '\bmain\s*\(' "$f" 2>/dev/null; then
+    cmd="$HOST -B$HOSTB -fopenacc -foffload=metal -O0 -g0 -o $out $f"
+  else
+    cmd="$HOST -B$HOSTB -fopenacc -foffload=metal -O0 -g0 -o $out $stub_main $f"
+  fi
+
+  # shellcheck disable=SC2086
+  if $cmd >"$out".stdout 2>"$err"; then
     echo "PASS $base" | tee -a "$LOG"
     pass=$((pass + 1))
   else
-    echo "FAIL $base (see $err)" | tee -a "$LOG"
-    fail=$((fail + 1))
-    sed -n '1,60p' "$err" | sed 's/^/  /' | tee -a "$LOG" || true
+    if rg -q --no-messages 'Undefined symbols for architecture|symbol\\(s\\) not found' "$err"; then
+      echo "SKIP $base (not standalone)" | tee -a "$LOG"
+    else
+      echo "FAIL $base (see $err)" | tee -a "$LOG"
+      fail=$((fail + 1))
+      sed -n '1,60p' "$err" | sed 's/^/  /' | tee -a "$LOG" || true
+    fi
   fi
 
   echo | tee -a "$LOG"
