@@ -52,6 +52,13 @@
   return SYMBOL_REF_P (addr) || LABEL_REF_P (addr);
 })
 
+(define_predicate "metal_indirect_call_operand"
+  (match_code "mem")
+{
+  rtx addr = XEXP (op, 0);
+  return register_operand (addr, Pmode) || register_operand (addr, ptr_mode);
+})
+
 ;; Constraints
 
 (define_register_constraint "R" "ALL_REGS"
@@ -1773,7 +1780,17 @@
 	 (match_operand 1 ""))]
   ""
 {
-  emit_call_insn (gen_metal_call_insn (operands[0], operands[1]));
+  rtx op = operands[0];
+  if (GET_CODE (op) == MEM)
+    {
+      rtx addr = XEXP (op, 0);
+      if (SYMBOL_REF_P (addr) || LABEL_REF_P (addr))
+	emit_call_insn (gen_metal_call_insn (operands[0], operands[1]));
+      else
+	emit_call_insn (gen_metal_call_indirect_insn (operands[0], operands[1]));
+    }
+  else
+    emit_call_insn (gen_metal_call_indirect_insn (operands[0], operands[1]));
   DONE;
 })
 
@@ -1783,8 +1800,22 @@
 	      (match_operand 2 "")))]
   ""
 {
-  emit_call_insn (gen_metal_call_value_insn (operands[0], operands[1],
-					     operands[2]));
+  rtx op = operands[1];
+  if (GET_CODE (op) == MEM)
+    {
+      rtx addr = XEXP (op, 0);
+      if (SYMBOL_REF_P (addr) || LABEL_REF_P (addr))
+	emit_call_insn (gen_metal_call_value_insn (operands[0], operands[1],
+						   operands[2]));
+      else
+	emit_call_insn (gen_metal_call_value_indirect_insn (operands[0],
+							    operands[1],
+							    operands[2]));
+    }
+  else
+    emit_call_insn (gen_metal_call_value_indirect_insn (operands[0],
+							operands[1],
+							operands[2]));
   DONE;
 })
 
@@ -1795,12 +1826,27 @@
   "%0();"
   [(set_attr "type" "call")])
 
+(define_insn "metal_call_indirect_insn"
+  [(call (match_operand:QI 0 "metal_indirect_call_operand" "m")
+	 (match_operand 1 ""))]
+  ""
+  "abort();"
+  [(set_attr "type" "call")])
+
 (define_insn "metal_call_value_insn"
   [(set (match_operand 0 "metal_register_operand" "=R")
 	(call (match_operand:QI 1 "metal_direct_call_operand" "m")
 	      (match_operand 2 "")))]
   ""
   "%0 = %1();"
+  [(set_attr "type" "call")])
+
+(define_insn "metal_call_value_indirect_insn"
+  [(set (match_operand 0 "metal_register_operand" "=R")
+	(call (match_operand:QI 1 "metal_indirect_call_operand" "m")
+	      (match_operand 2 "")))]
+  ""
+  "%0 = 0; abort();"
   [(set_attr "type" "call")])
 
 ;; Type conversions

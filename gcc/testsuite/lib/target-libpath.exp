@@ -86,8 +86,11 @@ proc set_ld_library_path_env_vars { } {
     return
   }
 
-  # Darwin's equivalent of LD_LIBRARY_PATH.
-  if { [istarget *-*-darwin\[89\]*] || [istarget *-*-darwin1\[0-4\]*] } {
+  # Darwin's equivalent of LD_LIBRARY_PATH.  Note that some system-launched
+  # applications may ignore DYLD_* environment variables on newer Darwin
+  # versions, but for tests executed from the build environment (typically via
+  # a shell) this is still required for build-tree testing.
+  if { [istarget *-*-darwin*] } {
     if { $orig_environment_saved == 0 } {
       set orig_environment_saved 1
       if [info exists env(DYLD_LIBRARY_PATH)] {
@@ -106,10 +109,6 @@ proc set_ld_library_path_env_vars { } {
     }
     verbose -log "DYLD_LIBRARY_PATH=[getenv DYLD_LIBRARY_PATH]"
     return
-  } elseif { [istarget *-*-darwin*] } {
-    # Later versions exclude DYLD_* variables when calling via system apps
-    # which includes, for example, the shells - so this cannot work there.
-    return 
   }
 
   if { $orig_environment_saved == 0 } {
@@ -304,4 +303,3 @@ proc get_shlib_extension { } {
     }
     return $shlib_ext
 }
-

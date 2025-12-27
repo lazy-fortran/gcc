@@ -184,9 +184,26 @@ proc libgomp_init { args } {
         # for uninstalled testing.
         lappend ALWAYS_CFLAGS "additional_flags=-B${blddir}/.libs"
         lappend ALWAYS_CFLAGS "additional_flags=-I${blddir}"
-        lappend ALWAYS_CFLAGS "ldflags=-L${blddir}/.libs"
+	lappend ALWAYS_CFLAGS "ldflags=-L${blddir}/.libs"
 
 	append always_ld_library_path ":${blddir}/.libs"
+
+	# On Darwin, build-tree libgomp may depend on other build-tree runtime
+	# libraries (notably libgfortran and libquadmath).  Ensure these are
+	# reachable for runtime checks.
+	if [ishost "*-*-darwin*"] {
+	    set _tripdir [file dirname $blddir]
+	    foreach _d { libgfortran libquadmath } {
+		set _p "${_tripdir}/${_d}/.libs"
+		if { [file isdirectory $_p] } {
+		    append always_ld_library_path ":${_p}"
+		}
+	    }
+	    unset _tripdir
+	}
+
+	# Ensure the plugin can be found for build-tree testing.
+	setenv GOMP_PLUGIN_PATH "${blddir}/.libs"
     }
     # The top-level include directory, for gomp-constants.h.
     lappend ALWAYS_CFLAGS "additional_flags=-I${srcdir}/../../include"

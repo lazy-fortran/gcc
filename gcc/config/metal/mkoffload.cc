@@ -1721,6 +1721,29 @@ main (int argc, char **argv)
     fatal_error (input_location, "atexit failed");
 
   const char *driver = getenv ("OFFLOAD_TARGET_DEFAULT");
+  char *driver_buf = NULL;
+
+  /* If the user configured the offload toolchain location via GCC_OFFLOAD_PATH,
+     try to locate the offload compiler driver there.  */
+  if (!driver)
+    {
+      const char *offload_path = getenv ("GCC_OFFLOAD_PATH");
+      if (offload_path && offload_path[0] != '\0')
+	{
+	  size_t len = strlen (offload_path) + strlen ("/bin/")
+	    + strlen (GCC_INSTALL_NAME) + 1;
+	  driver_buf = XNEWVEC (char, len);
+	  sprintf (driver_buf, "%s/bin/%s", offload_path, GCC_INSTALL_NAME);
+	  if (access_check (driver_buf, X_OK) == 0)
+	    driver = driver_buf;
+	  else
+	    {
+	      XDELETEVEC (driver_buf);
+	      driver_buf = NULL;
+	    }
+	}
+    }
+
   if (!driver)
     {
       /* Find the offload compiler similarly to nvptx/gcn mkoffload: prefer a
@@ -1734,7 +1757,6 @@ main (int argc, char **argv)
 	gcc_path = NULL;
 
       bool found = false;
-      char *driver_buf = NULL;
 
       if (gcc_path != NULL)
 	{
@@ -1743,17 +1765,6 @@ main (int argc, char **argv)
 	  sprintf (driver_buf, "%s/%s", gcc_path, GCC_INSTALL_NAME);
 	  if (access_check (driver_buf, X_OK) == 0)
 	    found = true;
-	  else if (access_check (collect_gcc, X_OK) == 0)
-	    {
-	      /* In build-tree builds, COLLECT_GCC is usually "xgcc", not
-		 GCC_INSTALL_NAME.  Fall back to COLLECT_GCC itself so that
-		 mkoffload can run without requiring an installed driver or
-		 manual OFFLOAD_TARGET_DEFAULT setup.  */
-	      driver = collect_gcc;
-	      found = true;
-	      XDELETEVEC (driver_buf);
-	      driver_buf = NULL;
-	    }
 	}
       else
 	found = true;
