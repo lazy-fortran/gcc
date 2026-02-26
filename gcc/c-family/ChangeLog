@@ -1,3 +1,34 @@
+2026-02-12  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	PR c/105555
+	* c-common.cc (fold_offsetof): Handle REALPART_EXPR
+	and IMAGPART_EXPR.
+
+2026-02-06  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	PR middle-end/123892
+	* c-common.cc: Replace CONST_CAST with const_cast<>.
+	* c-lex.cc: Likewise.
+
+2026-02-06  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	PR middle-end/123892
+	* c-gimplify.cc: Replace CONST_CAST_TREE with const_cast<tree>.
+
+2026-02-05  Jakub Jelinek  <jakub@redhat.com>
+
+	Revert:
+	2026-02-05  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/101312
+	* c-pretty-print.cc (c_pretty_printer::direct_abstract_declarator):
+	Look up "array " attribute instead of "array".
+
+2026-02-02  Patrick Palka  <ppalka@redhat.com>
+
+	* c-cppbuiltin.cc (c_cpp_builtins): Bump __cpp_deduction_guides to
+	202207L for C++23 and later.
+
 2026-01-28  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
 
 	PR c++/102846

@@ -57,30 +57,6 @@ enum binding_slots
  BINDING_SLOTS_FIXED = BINDING_SLOT_GLOBAL + 1
 };
 
-/* Create an overload suitable for recording an artificial TYPE_DECL
-   and another decl.  We use this machanism to implement the struct
-   stat hack.  */
-
-#define STAT_HACK_P(N) ((N) && TREE_CODE (N) == OVERLOAD && OVL_LOOKUP_P (N))
-#define STAT_TYPE_VISIBLE_P(N) TREE_USED (OVERLOAD_CHECK (N))
-#define STAT_TYPE(N) TREE_TYPE (N)
-#define STAT_DECL(N) OVL_FUNCTION (N)
-#define STAT_VISIBLE(N) OVL_CHAIN (N)
-#define MAYBE_STAT_DECL(N) (STAT_HACK_P (N) ? STAT_DECL (N) : N)
-#define MAYBE_STAT_TYPE(N) (STAT_HACK_P (N) ? STAT_TYPE (N) : NULL_TREE)
-
-/* When a STAT_HACK_P is true, OVL_USING_P and OVL_EXPORT_P are valid
-   and apply to the hacked type.  */
-
-/* For regular (maybe) overloaded functions, we have OVL_HIDDEN_P.
-   But we also need to indicate hiddenness on implicit type decls
-   (injected friend classes), and (coming soon) decls injected from
-   block-scope externs.  It is too awkward to press the existing
-   overload marking for that.  If we have a hidden non-function, we
-   always create a STAT_HACK, and use these two markers as needed.  */
-#define STAT_TYPE_HIDDEN_P(N) OVL_HIDDEN_P (N)
-#define STAT_DECL_HIDDEN_P(N) OVL_DEDUP_P (N)
-
 /* Create a STAT_HACK node with DECL as the value binding and TYPE as
    the type binding.  */
 
@@ -3736,6 +3712,8 @@ push_local_extern_decl_alias (tree decl)
 	      alias = *iter;
 	      if (!validate_constexpr_redeclaration (alias, decl))
 		return;
+	      if (TREE_CODE (decl) == FUNCTION_DECL)
+		merge_decl_arguments (decl, alias, false, true, true);
 	      break;
 	    }
 
@@ -3749,7 +3727,9 @@ push_local_extern_decl_alias (tree decl)
 	      for (tree *chain = &DECL_ARGUMENTS (alias);
 		   *chain; chain = &DECL_CHAIN (*chain))
 		{
+		  tree next = DECL_CHAIN (*chain);
 		  *chain = copy_decl (*chain);
+		  DECL_CHAIN (*chain) = next;
 		  DECL_CONTEXT (*chain) = alias;
 		}
 

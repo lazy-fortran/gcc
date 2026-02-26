@@ -2671,7 +2671,7 @@ add_function_candidate (struct z_candidate **candidates,
       if (i == 0 && first_arg != NULL_TREE)
 	arg = first_arg;
       else
-	arg = CONST_CAST_TREE (
+	arg = const_cast<tree> (
 		(*args)[i + skip - (first_arg != NULL_TREE ? 1 : 0)]);
       argtype = lvalue_type (arg);
 
@@ -5186,11 +5186,16 @@ perform_overload_resolution (tree fn,
 		  /*conversion_path=*/NULL_TREE,
 		  /*access_path=*/NULL_TREE,
 		  LOOKUP_NORMAL,
-		  candidates, complain);
+		  candidates, complain & ~tf_any_viable);
 
   *candidates = splice_viable (*candidates, false, any_viable_p);
   if (*any_viable_p)
-    cand = tourney (*candidates, complain);
+    {
+      if (complain & tf_any_viable)
+	cand = *candidates;
+      else
+	cand = tourney (*candidates, complain);
+    }
   else
     cand = NULL;
 
@@ -5272,7 +5277,7 @@ build_new_function_call (tree fn, vec<tree, va_gc> **args,
 
   if (args != NULL && *args != NULL)
     {
-      *args = resolve_args (*args, complain);
+      *args = resolve_args (*args, complain & ~tf_any_viable);
       if (*args == NULL)
 	return error_mark_node;
     }
@@ -5305,10 +5310,10 @@ build_new_function_call (tree fn, vec<tree, va_gc> **args,
 	}
       result = error_mark_node;
     }
+  else if (complain & tf_any_viable)
+    return void_node;
   else
-    {
-      result = build_over_call (cand, LOOKUP_NORMAL, complain);
-    }
+    result = build_over_call (cand, LOOKUP_NORMAL, complain);
 
   if (flag_coroutines
       && result
@@ -11848,7 +11853,7 @@ name_as_c_string (tree name, tree type, bool *free_p)
   else
     pretty_name = identifier_to_locale (IDENTIFIER_POINTER (name));
 
-  return CONST_CAST (char *, pretty_name);
+  return const_cast<char *> (pretty_name);
 }
 
 /* If CANDIDATES contains exactly one candidate, return it, otherwise

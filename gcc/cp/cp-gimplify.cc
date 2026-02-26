@@ -921,7 +921,15 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	  tree fntype = TREE_TYPE (CALL_EXPR_FN (*expr_p));
 	  if (INDIRECT_TYPE_P (fntype))
 	    fntype = TREE_TYPE (fntype);
-	  if (TREE_CODE (fntype) == METHOD_TYPE)
+	  tree decl = cp_get_callee_fndecl_nofold (*expr_p);
+	  /* We can't just rely on 'decl' because virtual function callees
+	     are expressed as OBJ_TYPE_REF.  Note that the xobj memfn check
+	     will also hold for calls of the form (&A::f)(a, ...) which does
+	     not require such sequencing, though it's allowed under
+	     "indeterminately sequenced".  */
+	  if (TREE_CODE (fntype) == METHOD_TYPE
+	      || (decl && DECL_LANG_SPECIFIC (decl)
+		  && DECL_XOBJ_MEMBER_FUNCTION_P (decl)))
 	    {
 	      int nargs = call_expr_nargs (*expr_p);
 	      bool side_effects = false;
@@ -977,6 +985,9 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 						    call_expr_nargs (*expr_p),
 						    &CALL_EXPR_ARG (*expr_p,
 								    0));
+		break;
+	      case CP_BUILT_IN_CONSTEXPR_DIAG:
+		*expr_p = void_node;
 		break;
 	      default:
 		break;
@@ -1912,6 +1923,22 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
     {
       *walk_subtrees = 0;
       return NULL_TREE;
+    }
+
+  if ((TREE_CODE (stmt) == VAR_DECL
+       || TREE_CODE (stmt) == PARM_DECL
+       || TREE_CODE (stmt) == RESULT_DECL)
+      && DECL_HAS_VALUE_EXPR_P (stmt)
+      /* Walk DECL_VALUE_EXPR mainly for benefit of xobj lambdas so that we
+	 adjust any invisiref object parm uses within the capture proxies.
+	 TODO: For GCC 17 do this walking unconditionally.  */
+      && current_function_decl
+      && DECL_XOBJ_MEMBER_FUNCTION_P (current_function_decl)
+      && LAMBDA_FUNCTION_P (current_function_decl))
+    {
+      tree ve = DECL_VALUE_EXPR (stmt);
+      cp_walk_tree (&ve, cp_genericize_r, data, NULL);
+      SET_DECL_VALUE_EXPR (stmt, ve);
     }
 
   switch (TREE_CODE (stmt))
@@ -3136,26 +3163,21 @@ cp_fold_maybe_rvalue (tree x, bool rval, fold_flags_t flags)
 {
   while (true)
     {
+      if (rval && (flags & ff_only_non_odr))
+	x = cp_fold_non_odr_use_1 (x);
       x = cp_fold (x, flags);
       if (rval)
-	x = mark_rvalue_use (x);
-      if (rval && (flags & ff_only_non_odr))
 	{
-	  tree v = cp_fold_non_odr_use_1 (x);
-	  if (v != x)
+	  x = mark_rvalue_use (x);
+	  if (!(flags & ff_only_non_odr)
+	      && DECL_P (x) && !TYPE_REF_P (TREE_TYPE (x)))
 	    {
-	      x = v;
-	      continue;
-	    }
-	}
-      else if (rval && DECL_P (x)
-	       && !TYPE_REF_P (TREE_TYPE (x)))
-	{
-	  tree v = decl_constant_value (x);
-	  if (v != x && v != error_mark_node)
-	    {
-	      x = v;
-	      continue;
+	      tree v = decl_constant_value (x);
+	      if (v != x && v != error_mark_node)
+		{
+		  x = v;
+		  continue;
+		}
 	    }
 	}
       break;
@@ -3419,9 +3441,9 @@ cp_fold (tree x, fold_flags_t flags)
 	 used as lvalues.  */
       if ((flags & ff_only_non_odr) && REFERENCE_REF_P (x))
 	{
-	  tree r = cp_fold_non_odr_use_1 (x);
-	  if (r != x)
-	    return convert_from_reference (cp_fold (r, flags));
+	  op0 = cp_fold_non_odr_use_1 (TREE_OPERAND (x, 0));
+	  if (op0 != TREE_OPERAND (x, 0))
+	    return convert_from_reference (cp_fold (op0, flags));
 	}
       goto unary;
 
@@ -3568,7 +3590,11 @@ cp_fold (tree x, fold_flags_t flags)
 	  if (op0 == error_mark_node || op1 == error_mark_node)
 	    x = error_mark_node;
 	  else if (op0 != TREE_OPERAND (x, 0) || op1 != TREE_OPERAND (x, 1))
-	    x = build2_loc (loc, code, TREE_TYPE (x), op0, op1);
+	    {
+	      if (code == INIT_EXPR && op1 != TREE_OPERAND (x, 1))
+		set_target_expr_eliding (op1);
+	      x = build2_loc (loc, code, TREE_TYPE (x), op0, op1);
+	    }
 	  break;
 	}
 

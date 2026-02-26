@@ -1586,17 +1586,7 @@ add_attributes_to_decl (tree *decl_p, const gfc_symbol *sym)
     }
 
   /* Also check trans-common.cc when updating/removing the following;
-     also update f95.c's gfc_gnu_attributes.
-     For the warning, see also OpenMP spec issue 4663.  */
-  if (sym_attr.omp_groupprivate && sym_attr.threadprivate)
-    {
-      /* Unset this flag; implicit 'declare target local(...)' remains.  */
-      sym_attr.omp_groupprivate = 0;
-      gfc_warning (OPT_Wopenmp,
-		   "Ignoring the %<groupprivate%> attribute for "
-		   "%<threadprivate%> variable %qs declared at %L",
-		   sym->name, &sym->declared_at);
-    }
+     also update f95.c's gfc_gnu_attributes.  */
   if (sym_attr.omp_groupprivate)
     gfc_error ("Sorry, OMP GROUPPRIVATE not implemented, "
 	       "used by %qs declared at %L", sym->name, &sym->declared_at);
@@ -2100,9 +2090,7 @@ gfc_get_symbol_decl (gfc_symbol * sym)
 	  || sym->attr.data || sym->ns->proc_name->attr.flavor == FL_MODULE)
       && (flag_coarray != GFC_FCOARRAY_LIB
 	  || !sym->attr.codimension || sym->attr.allocatable)
-      && !(sym->ts.type == BT_DERIVED && sym->ts.u.derived->attr.pdt_type)
-      && !(sym->ts.type == BT_CLASS
-	   && CLASS_DATA (sym)->ts.u.derived->attr.pdt_type))
+      && !(IS_PDT (sym) || IS_CLASS_PDT (sym)))
     {
       /* Add static initializer. For procedures, it is only needed if
 	 SAVE is specified otherwise they need to be reinitialized
@@ -4580,8 +4568,7 @@ gfc_init_default_dt (gfc_symbol * sym, stmtblock_t * block, bool dealloc,
   gcc_assert (block);
 
   /* Initialization of PDTs is done elsewhere.  */
-  if (sym->ts.type == BT_DERIVED && sym->ts.u.derived->attr.pdt_type
-      && !pdt_ok)
+  if (IS_PDT (sym) && !pdt_ok)
     return;
 
   gcc_assert (!sym->attr.allocatable);
@@ -4924,10 +4911,7 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
 	 && proc_sym != proc_sym->result) ? proc_sym->result : NULL;
 
   if (sym && !sym->attr.allocatable && !sym->attr.pointer
-      && sym->ts.type == BT_DERIVED
-      && sym->ts.u.derived
-      && !gfc_has_default_initializer (sym->ts.u.derived)
-      && sym->ts.u.derived->attr.pdt_type)
+      && IS_PDT (sym) && !gfc_has_default_initializer (sym->ts.u.derived))
     {
       gfc_init_block (&tmpblock);
       tmp = gfc_allocate_pdt_comp (sym->ts.u.derived,
@@ -5048,9 +5032,7 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
 	      gfc_add_init_cleanup (block, gfc_finish_block (&tmpblock), NULL);
 	    }
 	}
-      else if (sym->ts.type == BT_CLASS
-	       && CLASS_DATA (sym)->ts.u.derived
-	       && CLASS_DATA (sym)->ts.u.derived->attr.pdt_type)
+      else if (IS_CLASS_PDT (sym))
 	{
 	  gfc_component *data = CLASS_DATA (sym);
 	  is_pdt_type = true;
@@ -8236,8 +8218,7 @@ gfc_generate_function_code (gfc_namespace * ns)
   /* This permits the return value to be correctly initialized, even when the
      function result was not referenced.  */
   if (sym->abr_modproc_decl
-      && sym->ts.type == BT_DERIVED
-      && sym->ts.u.derived->attr.pdt_type
+      && IS_PDT (sym)
       && !sym->attr.allocatable
       && sym->result == sym
       && get_proc_result (sym) == NULL_TREE)
@@ -8308,7 +8289,8 @@ gfc_generate_function_code (gfc_namespace * ns)
 		  gfc_free_expr (init_exp);
 		  gfc_add_expr_to_block (&init, tmp);
 		}
-	      else if (rsym->ts.u.derived->attr.alloc_comp)
+
+	      if (rsym->ts.u.derived->attr.alloc_comp)
 		{
 		  rank = rsym->as ? rsym->as->rank : 0;
 		  tmp = gfc_nullify_alloc_comp (rsym->ts.u.derived, result,

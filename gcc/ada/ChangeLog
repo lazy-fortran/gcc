@@ -1,3 +1,141 @@
+2026-02-25  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124226
+	* sem_res.adb (Resolve_Implicit_Dereference): Move declaration to...
+	* sem_res.ads (Resolve_Implicit_Dereference): ...here.
+	* sem_attr.adb (Resolve_Attribute) <Attribute_Access>: Also call
+	Resolve_Implicit_Dereference when resolving a protected operation.
+
+2026-02-24  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/124224
+	* sem_aggr.adb (Resolve_Container_Aggregate): Minor tweaks.
+	(Resolve_Iterated_Association): Compute Typ on all paths.
+
+2026-02-22  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124192
+	* doc/gnat_rm/standard_and_implementation_defined_restrictions.rst
+	(Max_Tasks): Adjust description.
+	* gnat_rm.texi: Regenerate.
+
+2026-02-22  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124179
+	* sem_ch9.adb (Analyze_Triggering_Alternative): Use more robust
+	test for delay and entry call statements and fix thinko in test
+	for procedure call statements.
+
+2026-02-20  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* libgnat/s-stposu.adb (Finalize_Pool): Pass a local copy of the
+	handle in the call to Finalize_And_Deallocate.
+
+2026-02-16  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124106
+	* exp_ch4.adb (Expand_N_Allocator): Minor fix in commentary.
+	(Expand_Allocator_Expression): Propagate the Subpool_Handle_Name
+	of the original allocator onto the newly built allocators.
+	* exp_ch6.adb (Make_Build_In_Place_Call_In_Allocator): Likewise.
+	Use Preserve_Comes_From_Source to propagate Comes_From_Source.
+	(Make_CPP_Constructor_Call_In_Allocator): Likewise.
+
+2026-02-11  Steve Baird  <baird@adacore.com>
+
+	PR ada/124016
+	* doc/gnat_rm/implementation_defined_attributes.rst: Document
+	that Finalization_Size attribute is defined for class-wide types.
+	* exp_attr.adb (Expand_N_Attribute_Reference) <Finalization_Size>:
+	Add support for class-wide types.
+	<Size>: Raise Constraint_Error for class-wide types.
+	* exp_imgv.adb (Expand_Image_Attribute): Adjust call to renaming.
+	(Expand_Wide_Image_Attribute): Likewise.
+	(Expand_Wide_Wide_Image_Attribute): Likewise.
+	* sem_attr.ads (Finalization_Size): Update comment.
+	* sem_attr.adb (Analyze_Image): Adjust call to renaming.
+	(Analyze_Attribute): Remove check disallowing Finalization_Size
+	attribute for class-wide types.
+	* sem_util.ads (Is_Object_Image): Rename into...
+	(Is_Object_Prefix): ...this.
+	* sem_util.adb (Is_Object_Image): Rename into...
+	(Is_Object_Prefix): ...this.
+	* libgnat/a-cbinho.ads (Extra_Storage): Use Descriptor_Size and
+	Finalization_Size attributes.
+	(Max_Allocation_Overhead_In_Storage_Elements): Delete.
+
+2026-02-11  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/124054
+	* exp_util.adb (Build_Allocate_Deallocate_Proc): Tidy up and pass
+	Proc_Id as the new scope in the call to the New_Copy_Tree function.
+
+2026-02-08  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/124025
+	* exp_ch9.adb (Expand_Entry_Barrier.Is_Global_Entity): Use
+	Scope_Within_Or_Same to test whether the object is local.
+
+2026-02-08  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/121576
+	* freeze.adb (Freeze_Array_Type): When the component size is
+	specified, check that it is valid when the component type is
+	either a fixed-point type or a bit-packed array type.
+
+2026-02-03  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* checks.adb (Apply_Discriminant_Check): Bail out for a source type
+	that is a class-wide type whose root type has no discriminants.
+	* exp_ch4.adb (Expand_N_Type_Conversion): If the target type is an
+	access type, emit null access checks before accessibility checks.
+	* sem_util.adb (In_Return_Value): Deal again with assignments to
+	return objects.
+
+2026-02-02  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/89159
+	* sem_ch6.adb (Conforming_Types.Is_Matching_Limited_View): Return
+	true when the type is an incomplete view of the non-limited view.
+
+2026-02-01  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/123902
+	* sem_ch4.adb (Analyze_Selected_Component): Also test
+	Core_Extensions_Allowed for discriminated private types.
+	Rework and augment commentary throughout the procedure.
+
+2026-02-01  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/121316
+	* exp_ch5.adb (Expand_Iterator_Loop_Over_Array): Minor tweak.
+	(Expand_Iterator_Loop_Over_Container): Likewise.
+	(Expand_N_Loop_Statement): Use Statements (N) throughout.
+
+2026-01-30  Gary Dismukes  <dismukes@adacore.com>
+
+	* sem_ch8.adb (End_Use_Type): Remove test of Prev_Use_Clause as
+	as a condition for resetting In_Use and Current_Use_Clause, and
+	change setting of that flag and field based on Prev_Use_Clause
+	rather than setting them to Empty. Revise preceding comment.
+
+2026-01-30  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/123867
+	* sem_ch10.adb (Analyze_Compilation_Unit): Output info message
+	when -gnatdi is specified.
+	(Install_Parents): Likewise.  Set the Is_Visible_Lib_Unit flag
+	on the unit.
+	(Install_Private_With_Clauses): Do not output info message here.
+	(Remove_Parents): Output info message when -gnatdi is specified
+	and clear the Is_Visible_Lib_Unit flag on the unit.
+
 2026-01-29  Eric Botcazou  <ebotcazou@adacore.com>
 
 	PR ada/123861

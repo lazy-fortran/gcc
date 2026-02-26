@@ -503,8 +503,8 @@
 			  vaeskf1,vaeskf2,vaesz,vsha2ms,vsha2ch,vsha2cl,vsm4k,vsm4r,\
 			  vsm3me,vsm3c,vfncvtbf16,vfwcvtbf16,vfwmaccbf16")
 	   (const_int INVALID_ATTRIBUTE)
-	(and (eq_attr "type" "vlde,vste,vlsegde,vssegte,vlsegds,vssegts,\
-			       vlsegdff,vssegtux,vlsegdox,vlsegdux")
+	(and (eq_attr "type" "vlde,vste,vlds,vsts,vlsegde,vssegte,vlsegds,\
+			      vssegts,vlsegdff,vssegtux,vlsegdox,vlsegdux")
 	      (match_test "TARGET_XTHEADVECTOR"))
 	   (const_int INVALID_ATTRIBUTE)
 	 (eq_attr "mode" "RVVM8QI,RVVM1BI") (const_int 1)
@@ -1341,7 +1341,7 @@
 (define_insn_and_split "*mov<V_FRACT:mode><P:mode>_lra"
   [(set (match_operand:V_FRACT 0 "reg_or_mem_operand" "=vr, m,vr")
 	(match_operand:V_FRACT 1 "reg_or_mem_operand" "  m,vr,vr"))
-   (clobber (match_scratch:P 2 "=&r,&r,X"))]
+   (clobber (match_scratch:P 2 "=&r,&r,r"))]
   "TARGET_VECTOR && (lra_in_progress || reload_completed)"
   "#"
   "&& reload_completed"
@@ -1363,7 +1363,7 @@
 (define_insn_and_split "*mov<VB:mode><P:mode>_lra"
   [(set (match_operand:VB 0 "reg_or_mem_operand" "=vr, m,vr")
 	(match_operand:VB 1 "reg_or_mem_operand" "  m,vr,vr"))
-   (clobber (match_scratch:P 2 "=&r,&r,X"))]
+   (clobber (match_scratch:P 2 "=&r,&r,r"))]
   "TARGET_VECTOR && (lra_in_progress || reload_completed)"
   "#"
   "&& reload_completed"
@@ -1491,7 +1491,7 @@
 (define_insn_and_split "*mov<VLS_AVL_REG:mode><P:mode>_lra"
   [(set (match_operand:VLS_AVL_REG 0 "reg_or_mem_operand" "=vr, m,vr")
 	(match_operand:VLS_AVL_REG 1 "reg_or_mem_operand" "  m,vr,vr"))
-   (clobber (match_scratch:P 2 "=&r,&r,X"))]
+   (clobber (match_scratch:P 2 "=&r,&r,r"))]
   "TARGET_VECTOR && (lra_in_progress || reload_completed)
    && (register_operand (operands[0], <VLS_AVL_REG:MODE>mode)
        || register_operand (operands[1], <VLS_AVL_REG:MODE>mode))"

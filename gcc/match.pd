@@ -5178,7 +5178,8 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
         (op:c @2 @1))
   (if (INTEGRAL_TYPE_P (type)
        && TYPE_PRECISION (type) > 1
-       && (INTEGRAL_TYPE_P (TREE_TYPE (@0))))
+       && INTEGRAL_TYPE_P (TREE_TYPE (@0))
+       && expr_no_side_effects_p (@2))
        (op (mult (convert:type @0) @2) @1))))
 
 /* (zero_one != 0) ? z <op> y : y -> ((typeof(y))zero_one * z) <op> y */
@@ -5190,7 +5191,8 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
         @1)
   (if (INTEGRAL_TYPE_P (type)
        && TYPE_PRECISION (type) > 1
-       && (INTEGRAL_TYPE_P (TREE_TYPE (@0))))
+       && INTEGRAL_TYPE_P (TREE_TYPE (@0))
+       && expr_no_side_effects_p (@2))
        (op (mult (convert:type @0) @2) @1))))
 
 /* ?: Value replacement. */
@@ -6468,7 +6470,9 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
    (eqne (cnd @0 @1 @2) (cnd @3 @1 @2))
     (if (!HONOR_NANS (@1)
 	 && types_match (TREE_TYPE (@0), TREE_TYPE (@3))
-         && types_match (type, TREE_TYPE (@0)))
+         && types_match (type, TREE_TYPE (@0))
+	 && expr_no_side_effects_p (@1)
+	 && expr_no_side_effects_p (@2))
      (cnd (bit_and (bit_xor @0 @3) (ne:type @1 @2))
       { constant_boolean_node (eqne == NE_EXPR, type); }
       { constant_boolean_node (eqne != NE_EXPR, type); })))
@@ -6476,7 +6480,9 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
    (eqne (cnd @0 @1 @2) (cnd @3 @2 @1))
     (if (!HONOR_NANS (@1)
 	 && types_match (TREE_TYPE (@0), TREE_TYPE (@3))
-         && types_match (type, TREE_TYPE (@0)))
+         && types_match (type, TREE_TYPE (@0))
+	 && expr_no_side_effects_p (@1)
+	 && expr_no_side_effects_p (@2))
      (cnd (bit_ior (bit_xor @0 @3) (eq:type @1 @2))
       { constant_boolean_node (eqne != NE_EXPR, type); }
       { constant_boolean_node (eqne == NE_EXPR, type); })))))
@@ -8361,6 +8367,16 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
     /* Otherwise ctype must be wider than TREE_TYPE (@0) and pure
        sign extension followed by AND with C will achieve the effect.  */
     (bit_and (convert @0) @1)))))
+
+/* (A | (convert?)(A != 0)) EQ|NE 0 -> A EQ|NE 0 (PR114969)
+
+   The NE variant of this pattern is produced by the C++ code:
+
+   (bool)(std::max (ulong_A, 0) | (ulong_A ? 1 : 0)).  */
+(for cmp (eq ne)
+ (simplify
+  (cmp (bit_ior:c @0 (convert? (ne @0 integer_zerop))) integer_zerop)
+  (cmp @0 { build_zero_cst (TREE_TYPE (@0)); })))
 
 /* When the addresses are not directly of decls compare base and offset.
    This implements some remaining parts of fold_comparison address
@@ -12211,7 +12227,8 @@ and,
 (simplify
   (bit_ior:c (lshift @0 INTEGER_CST@1)
 	     (bit_xor (rshift @2 INTEGER_CST@3) INTEGER_CST@4))
-   (if (tree_fits_uhwi_p (@1)
+   (if (type_has_mode_precision_p (type)
+	&& tree_fits_uhwi_p (@1)
 	&& tree_fits_uhwi_p (@3)
 	&& tree_fits_uhwi_p (@4)
 	&& ((~((HOST_WIDE_INT_1U << tree_to_uhwi (@1)) - 1)) & tree_to_uhwi (@4)) == 0
@@ -12225,7 +12242,8 @@ and,
 (simplify
   (bit_ior:c (bit_xor (lshift @0 INTEGER_CST@1) INTEGER_CST@2)
 	     (rshift @3 INTEGER_CST@4))
-   (if (tree_fits_uhwi_p (@1)
+   (if (type_has_mode_precision_p (type)
+	&& tree_fits_uhwi_p (@1)
 	&& tree_fits_uhwi_p (@2)
 	&& tree_fits_uhwi_p (@4)
 	&& (((((HOST_WIDE_INT_1U << tree_to_uhwi (@1)) - 1)) & tree_to_uhwi (@2)) == 0)

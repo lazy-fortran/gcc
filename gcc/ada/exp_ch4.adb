@@ -656,7 +656,9 @@ package body Exp_Ch4 is
              Object_Definition   => New_Occurrence_Of (Typ, Loc),
              Expression          =>
                Make_Allocator (Loc,
-                 Expression => New_Occurrence_Of (Etype (Exp), Loc)));
+                 Subpool_Handle_Name =>
+                   Relocate_Node (Subpool_Handle_Name (N)),
+                 Expression          => New_Occurrence_Of (Etype (Exp), Loc)));
 
       begin
          --  Prevent default initialization of the allocator
@@ -695,7 +697,9 @@ package body Exp_Ch4 is
              Object_Definition   => New_Occurrence_Of (Typ, Loc),
              Expression          =>
                Make_Allocator (Loc,
-                 Expression => New_Occurrence_Of (Etype (Exp), Loc)));
+                 Subpool_Handle_Name =>
+                   Relocate_Node (Subpool_Handle_Name (N)),
+                 Expression          => New_Occurrence_Of (Etype (Exp), Loc)));
 
       begin
          --  Prevent default initialization of the allocator
@@ -4634,8 +4638,7 @@ package body Exp_Ch4 is
 
       --  Set the storage pool and find the appropriate version of Allocate to
       --  call. Do not overwrite the storage pool if it is already set, which
-      --  can happen for build-in-place function returns (see
-      --  Exp_Ch4.Expand_N_Extended_Return_Statement).
+      --  can occur for BIP function returns (see Expand_N_Object_Declaration).
 
       if No (Storage_Pool (N)) then
          Pool := Associated_Storage_Pool (Root_Type (PtrT));
@@ -12325,6 +12328,10 @@ package body Exp_Ch4 is
       --  Case of converting to an access type
 
       if Is_Access_Type (Target_Type) then
+         --  Generate a null access check first for the sake of ACATS c3a0025
+
+         Apply_Constraint_Check (Operand, Target_Type);
+
          --  In terms of accessibility rules, an anonymous access discriminant
          --  is not considered separate from its parent object.
 
@@ -12447,7 +12454,7 @@ package body Exp_Ch4 is
 
       --  Case of conversions of tagged types and access to tagged types
 
-      --  When needed, that is to say when the expression is class-wide, Add
+      --  When needed, that is to say when the expression is class-wide, add
       --  runtime a tag check for (strict) downward conversion by using the
       --  membership test, generating:
 
@@ -12579,11 +12586,6 @@ package body Exp_Ch4 is
                end;
             end if;
          end Tagged_Conversion;
-
-      --  Case of other access type conversions
-
-      elsif Is_Access_Type (Target_Type) then
-         Apply_Constraint_Check (Operand, Target_Type);
 
       --  Case of conversions from a fixed-point type
 

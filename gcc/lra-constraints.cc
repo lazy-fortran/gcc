@@ -134,6 +134,7 @@
 #include "print-rtl.h"
 #include "function-abi.h"
 #include "rtl-iter.h"
+#include "hash-set.h"
 
 /* Value of LRA_CURR_RELOAD_NUM at the beginning of BB of the current
    insn.  Remember that LRA_CURR_RELOAD_NUM is the number of emitted
@@ -495,6 +496,23 @@ satisfies_address_constraint_p (rtx op, enum constraint_num constraint)
   return satisfies_address_constraint_p (&ad, constraint);
 }
 
+/* Set of equivalences whose original targets have set up pointer flag.  */
+static hash_set <rtx> *pointer_equiv_set;
+
+/* Add x to pointer_equiv_set.  */
+void
+lra_pointer_equiv_set_add (rtx x)
+{
+  pointer_equiv_set->add (x);
+}
+
+/* Return true if x is in pointer_equiv_set.  */
+bool
+lra_pointer_equiv_set_in (rtx x)
+{
+  return pointer_equiv_set->contains (x);
+}
+
 /* Initiate equivalences for LRA.  As we keep original equivalences
    before any elimination, we need to make copies otherwise any change
    in insns might change the equivalences.  */
@@ -511,6 +529,14 @@ lra_init_equiv (void)
       if ((res = ira_reg_equiv[i].invariant) != NULL_RTX)
 	ira_reg_equiv[i].invariant = copy_rtx (res);
     }
+  pointer_equiv_set = new hash_set <rtx>;
+}
+
+/* Finish equivalence data for LRA.  */
+void
+lra_finish_equiv (void)
+{
+  delete pointer_equiv_set;
 }
 
 static rtx loc_equivalence_callback (rtx, const_rtx, void *);
@@ -560,9 +586,9 @@ get_equiv (rtx x)
   gcc_unreachable ();
 }
 
-/* If we have decided to substitute X with the equivalent value,
-   return that value after elimination for INSN, otherwise return
-   X.  */
+/* If we have decided to substitute X with the equivalent value, return that
+   value after elimination for INSN, otherwise return X.  Add the result to
+   pointer_equiv_set if X has set up pointer flag.  */
 static rtx
 get_equiv_with_elimination (rtx x, rtx_insn *insn)
 {
@@ -570,8 +596,11 @@ get_equiv_with_elimination (rtx x, rtx_insn *insn)
 
   if (x == res || CONSTANT_P (res))
     return res;
-  return lra_eliminate_regs_1 (insn, res, GET_MODE (res),
-			       false, false, 0, true);
+  res = lra_eliminate_regs_1 (insn, res, GET_MODE (res),
+			      false, false, 0, true);
+  if (REG_POINTER (x))
+    lra_pointer_equiv_set_add (res);
+  return res;
 }
 
 /* Set up curr_operand_mode.  */
@@ -651,6 +680,27 @@ canonicalize_reload_addr (rtx addr)
     }
 
   return addr;
+}
+
+/* Return rtx accessing reload REG of RCLASS matching another reload reg in
+   MODE.  */
+static rtx
+get_matching_reload_reg_subreg (machine_mode mode, rtx reg,
+				enum reg_class rclass)
+{
+  int hard_regno = ira_class_hard_regs[rclass][0];
+  if (subreg_regno_offset (hard_regno,
+			   GET_MODE (reg),
+			   subreg_lowpart_offset (mode, GET_MODE (reg)),
+			   mode) == 0)
+    /* For matching scalar int modes generate the right subreg byte offset for
+       BE targets -- see call of reload.cc:operands_match_p in
+       recog.cc:constrain_operands.  */
+    return lowpart_subreg (mode, reg, GET_MODE (reg));
+  int offset = (lra_constraint_offset (hard_regno, GET_MODE (reg))
+		- lra_constraint_offset (hard_regno, mode)) * UNITS_PER_WORD;
+  lra_assert (offset >= 0);
+  return gen_rtx_SUBREG (mode, reg, offset);
 }
 
 /* Create a new pseudo using MODE, RCLASS, EXCLUDE_START_HARD_REGS, ORIGINAL or
@@ -737,7 +787,7 @@ get_reload_reg (enum op_type type, machine_mode mode, rtx original,
 		if (maybe_lt (GET_MODE_SIZE (GET_MODE (reg)),
 			      GET_MODE_SIZE (mode)))
 		  continue;
-		reg = lowpart_subreg (mode, reg, GET_MODE (reg));
+		reg = get_matching_reload_reg_subreg (mode, reg, new_class);
 		if (reg == NULL_RTX || GET_CODE (reg) != SUBREG)
 		  continue;
 	      }
@@ -1105,7 +1155,7 @@ match_reload (signed char out, signed char *ins, signed char *outs,
 	    = lra_create_new_reg_with_unique_value (inmode, in_rtx, goal_class,
 						    exclude_start_hard_regs,
 						    "");
-	  new_out_reg = gen_lowpart_SUBREG (outmode, reg);
+	  new_out_reg = get_matching_reload_reg_subreg (outmode, reg, goal_class);
 	  LRA_SUBREG_P (new_out_reg) = 1;
 	  /* If the input reg is dying here, we can use the same hard
 	     register for REG and IN_RTX.  We do it only for original
@@ -1124,7 +1174,7 @@ match_reload (signed char out, signed char *ins, signed char *outs,
 						    goal_class,
 						    exclude_start_hard_regs,
 						    "");
-	  new_in_reg = gen_lowpart_SUBREG (inmode, reg);
+	  new_in_reg = get_matching_reload_reg_subreg (inmode, reg, goal_class);
 	  /* NEW_IN_REG is non-paradoxical subreg.  We don't want
 	     NEW_OUT_REG living above.  We add clobber clause for
 	     this.  This is just a temporary clobber.  We can remove
@@ -1605,7 +1655,10 @@ process_addr_reg (rtx *loc, bool check_only_p, rtx_insn **before, rtx_insn **aft
 	      dump_value_slim (lra_dump_file, *loc, 1);
 	      fprintf (lra_dump_file, "\n");
 	    }
-	  *loc = copy_rtx (*loc);
+	  rtx new_equiv = copy_rtx (*loc);
+	  if (lra_pointer_equiv_set_in (*loc))
+	    lra_pointer_equiv_set_add (new_equiv);
+	  *loc = new_equiv;
 	}
       if (*loc != reg || ! in_class_p (reg, cl, &new_class))
 	{
@@ -3283,7 +3336,15 @@ process_alt_operands (int only_alternative)
 	    early_clobbered_nops[early_clobbered_regs_num++] = nop;
 	}
 
-      if (curr_insn_set != NULL_RTX && n_operands == 2
+      if (curr_insn_set != NULL_RTX
+	  /* Allow just two operands or three operands where the third
+	     is a clobber.  */
+	  && (n_operands == 2
+	      || (n_operands == 3
+		  && GET_CODE (PATTERN (curr_insn)) == PARALLEL
+		  && XVECLEN (PATTERN (curr_insn), 0) == 2
+		  && GET_CODE (XVECEXP (PATTERN (curr_insn), 0, 1))
+		     == CLOBBER))
 	  /* Prevent processing non-move insns.  */
 	  && (GET_CODE (SET_SRC (curr_insn_set)) == SUBREG
 	      || SET_SRC (curr_insn_set) == no_subreg_reg_operand[1])
@@ -4333,7 +4394,10 @@ curr_insn_transform (bool check_only_p)
 	if (subst != old)
 	  {
 	    equiv_substition_p[i] = true;
-	    subst = copy_rtx (subst);
+	    rtx new_subst = copy_rtx (subst);
+	    if (lra_pointer_equiv_set_in (subst))
+	      lra_pointer_equiv_set_add (new_subst);
+	    subst = new_subst;
 	    lra_assert (REG_P (old));
 	    if (GET_CODE (op) != SUBREG)
 	      *curr_id->operand_loc[i] = subst;
@@ -4884,6 +4948,8 @@ curr_insn_transform (bool check_only_p)
 	      && find_reg_note (curr_insn, REG_UNUSED, old) == NULL_RTX
 	      /* OLD can be an equivalent constant here.  */
 	      && !CONSTANT_P (old)
+	      /* No need to write back anything for a scratch.  */
+	      && GET_CODE (old) != SCRATCH
 	      && (!REG_P(old) || !ira_former_scratch_p (REGNO (old))))
 	    {
 	      start_sequence ();
@@ -5026,7 +5092,8 @@ curr_insn_transform (bool check_only_p)
 	  const_insn = prev;
 	}
     }
-  lra_process_new_insns (curr_insn, before, after, "Inserting insn reload");
+  lra_process_new_insns (curr_insn, before, after,
+			 "Inserting insn reload", true);
   if (const_regno >= 0) {
     bool move_p = true;
     for (rtx_insn *insn = before; insn != curr_insn; insn = NEXT_INSN (insn))

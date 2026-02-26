@@ -14791,6 +14791,13 @@ package body Sem_Util is
                return Is_Return_Object (Defining_Identifier (P))
                  and then Exp_Defines_Or_Is_Tied_To_Return_Value;
 
+            --  Something assigned to a return object is a return value
+
+            when N_Assignment_Statement =>
+               return Is_Entity_Name (Name (P))
+                 and then Is_Return_Object (Entity (Name (P)))
+                 and then Exp_Defines_Or_Is_Tied_To_Return_Value;
+
             --  An allocator is not a return value unless specially built
 
             when N_Allocator =>
@@ -19842,11 +19849,11 @@ package body Sem_Util is
       end case;
    end Is_Null_Record_Type;
 
-   ---------------------
-   -- Is_Object_Image --
-   ---------------------
+   ----------------------
+   -- Is_Object_Prefix --
+   ----------------------
 
-   function Is_Object_Image (Prefix : Node_Id) return Boolean is
+   function Is_Object_Prefix (Prefix : Node_Id) return Boolean is
    begin
       --  Here we test for the case that the prefix is not a type and assume
       --  if it is not then it must be a named value or an object reference.
@@ -19856,7 +19863,7 @@ package body Sem_Util is
       return not (Is_Entity_Name (Prefix)
                   and then Is_Type (Entity (Prefix))
                   and then not Is_Current_Instance (Prefix));
-   end Is_Object_Image;
+   end Is_Object_Prefix;
 
    -------------------------
    -- Is_Object_Reference --

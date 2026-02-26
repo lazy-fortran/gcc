@@ -235,6 +235,10 @@ get_reflection (location_t loc, tree t, reflect_kind kind/*=REFLECT_UNDEF*/)
 	t = dtor;
     }
 
+  /* Look through block scope externs.  */
+  if (VAR_OR_FUNCTION_DECL_P (t) && DECL_LOCAL_DECL_P (t))
+    t = DECL_LOCAL_DECL_ALIAS (t);
+
   if (t == error_mark_node)
     return error_mark_node;
 
@@ -1576,7 +1580,7 @@ static tree
 eval_has_static_storage_duration (const_tree r, reflect_kind kind)
 {
   if (eval_is_variable (r, kind) == boolean_true_node
-      && decl_storage_duration (CONST_CAST_TREE (r)) == dk_static)
+      && decl_storage_duration (const_cast<tree> (r)) == dk_static)
     return boolean_true_node;
   /* This includes DECL_NTTP_OBJECT_P objects.  */
   else if (eval_is_object (kind) == boolean_true_node)
@@ -1593,7 +1597,7 @@ static tree
 eval_has_thread_storage_duration (const_tree r, reflect_kind kind)
 {
   if (eval_is_variable (r, kind) == boolean_true_node
-      && decl_storage_duration (CONST_CAST_TREE (r)) == dk_thread)
+      && decl_storage_duration (const_cast<tree> (r)) == dk_thread)
     return boolean_true_node;
   else
     return boolean_false_node;
@@ -1607,7 +1611,7 @@ static tree
 eval_has_automatic_storage_duration (const_tree r, reflect_kind kind)
 {
   if (eval_is_variable (r, kind) == boolean_true_node
-      && decl_storage_duration (CONST_CAST_TREE (r)) == dk_auto)
+      && decl_storage_duration (const_cast<tree> (r)) == dk_auto)
     return boolean_true_node;
   else
     return boolean_false_node;
@@ -1708,6 +1712,8 @@ eval_has_default_argument (tree r, reflect_kind kind)
   if (eval_is_function_parameter (r, kind) == boolean_false_node)
     return boolean_false_node;
   r = maybe_update_function_parm (r);
+  if (DECL_HAS_DEFAULT_ARGUMENT_P (r))
+    return boolean_true_node;
   tree fn = DECL_CONTEXT (r);
   tree args = FUNCTION_FIRST_USER_PARM (fn);
   tree types = FUNCTION_FIRST_USER_PARMTYPE (fn);
@@ -2465,6 +2471,8 @@ type_of (tree r, reflect_kind kind)
     }
   else if (TREE_CODE (r) == FIELD_DECL && DECL_BIT_FIELD_TYPE (r))
     r = DECL_BIT_FIELD_TYPE (r);
+  else if (TREE_CODE (r) == FUNCTION_DECL)
+    r = static_fn_type (r);
   else
     r = TREE_TYPE (r);
   return strip_typedefs (r);
@@ -2602,7 +2610,8 @@ eval_object_of (location_t loc, const constexpr_ctx *ctx, tree r,
 		tree *jump_target, tree fun)
 {
   tree orig = r;
-  if (TYPE_REF_P (TREE_TYPE (r)))
+  tree type = TREE_TYPE (r);
+  if (type && TYPE_REF_P (type))
     r = cxx_eval_constant_expression (ctx, r, vc_prvalue, non_constant_p,
 				      overflow_p, jump_target);
   r = maybe_get_reference_referent (r);
@@ -3000,12 +3009,18 @@ eval_parameters_of (location_t loc, const constexpr_ctx *ctx, tree r,
 
   r = maybe_get_first_fn (r);
   vec<constructor_elt, va_gc> *elts = nullptr;
-  tree args = (TREE_CODE (r) == FUNCTION_DECL
-	       ? FUNCTION_FIRST_USER_PARM (r)
-	       : TYPE_ARG_TYPES (r));
-  for (tree arg = args; arg && arg != void_list_node; arg = TREE_CHAIN (arg))
-    CONSTRUCTOR_APPEND_ELT (elts, NULL_TREE,
-			    get_reflection_raw (loc, arg, REFLECT_PARM));
+  if (TREE_CODE (r) == FUNCTION_DECL)
+    for (tree arg = FUNCTION_FIRST_USER_PARM (r); arg; arg = DECL_CHAIN (arg))
+      CONSTRUCTOR_APPEND_ELT (elts, NULL_TREE,
+			      get_reflection_raw (loc, arg, REFLECT_PARM));
+  else
+    for (tree arg = TYPE_ARG_TYPES (r); arg && arg != void_list_node;
+	 arg = TREE_CHAIN (arg))
+      {
+        tree type = maybe_strip_typedefs (TREE_VALUE (arg));
+        CONSTRUCTOR_APPEND_ELT (elts, NULL_TREE,
+				get_reflection_raw (loc, type));
+      }
   return get_vector_of_info_elts (elts);
 }
 
@@ -5379,7 +5394,11 @@ eval_substitute (location_t loc, const constexpr_ctx *ctx,
       ret = finish_template_variable (ret, tf_none);
     }
   else
-    ret = lookup_template_function (r, rvec);
+    {
+      if (DECL_FUNCTION_TEMPLATE_P (r))
+	r = ovl_make (r, NULL_TREE);
+      ret = lookup_template_function (r, rvec);
+    }
   return get_reflection_raw (loc, ret);
 }
 
@@ -5703,10 +5722,10 @@ eval_data_member_spec (location_t loc, const constexpr_ctx *ctx,
 	  memset (namep, 0, l + 1);
 	  l = 0;
 	  FOR_EACH_CONSTRUCTOR_ELT (CONSTRUCTOR_ELTS (f), k, field, value)
-	    if (field == NULL_TREE)
+	    if (integer_zerop (value))
+	      break;
+	    else if (field == NULL_TREE)
 	      {
-		if (integer_zerop (value))
-		  break;
 		namep[l] = tree_to_shwi (value);
 		++l;
 	      }
@@ -5714,8 +5733,6 @@ eval_data_member_spec (location_t loc, const constexpr_ctx *ctx,
 	      {
 		tree lo = TREE_OPERAND (field, 0);
 		tree hi = TREE_OPERAND (field, 1);
-		if (integer_zerop (value))
-		  break;
 		unsigned HOST_WIDE_INT m = tree_to_uhwi (hi);
 		for (l = tree_to_uhwi (lo); l <= m; ++l)
 		  namep[l] = tree_to_shwi (value);
@@ -6073,8 +6090,9 @@ eval_define_aggregate (location_t loc, const constexpr_ctx *ctx,
   if (!TYPE_BINFO (type))
     xref_basetypes (type, NULL_TREE);
   pushclass (type);
-  gcc_assert (!TYPE_FIELDS (type));
-  tree fields = NULL_TREE;
+  TYPE_BEING_DEFINED (type) = 1;
+  build_self_reference ();
+  tree fields = TYPE_FIELDS (type);
   for (int i = 0; i < TREE_VEC_LENGTH (rvec); ++i)
     {
       tree ra = TREE_VEC_ELT (rvec, i);
@@ -6459,18 +6477,18 @@ namespace_members_of (location_t loc, tree ns)
   hash_set<tree> *seen = nullptr;
   for (tree o : *DECL_NAMESPACE_BINDINGS (ns))
     {
-      if (TREE_CODE (o) == OVERLOAD && OVL_LOOKUP_P (o))
+      if (STAT_HACK_P (o))
 	{
-	  if (TREE_TYPE (o))
+	  if (STAT_TYPE (o) && !STAT_TYPE_HIDDEN_P (o))
 	    {
-	      tree m = TREE_TYPE (TREE_TYPE (o));
+	      tree m = TREE_TYPE (STAT_TYPE (o));
 	      if (members_of_representable_p (ns, m))
 		CONSTRUCTOR_APPEND_ELT (elts, NULL_TREE,
 					get_reflection_raw (loc, m));
 	    }
-	  if (OVL_DEDUP_P (o) || !OVL_FUNCTION (o))
+	  if (STAT_DECL_HIDDEN_P (o) || !STAT_DECL (o))
 	    continue;
-	  o = OVL_FUNCTION (o);
+	  o = STAT_DECL (o);
 	}
       for (ovl_iterator iter (o); iter; ++iter)
 	{
@@ -7327,8 +7345,7 @@ process_metafunction (const constexpr_ctx *ctx, tree fun, tree call,
   tree type = NULL_TREE, ht, info;
   reflect_kind kind = REFLECT_UNDEF;
   for (int argno = 0; argno < 3; ++argno)
-    switch ((minfo->kind >> ((argno + 1) * METAFN_KIND_SHIFT))
-	    & METAFN_KIND_MASK)
+    switch (METAFN_KIND_ARG (argno))
       {
       case METAFN_KIND_ARG_VOID:
 	break;
@@ -7340,13 +7357,10 @@ process_metafunction (const constexpr_ctx *ctx, tree fun, tree call,
 	if (*jump_target || *non_constant_p)
 	  return NULL_TREE;
 	ht = REFLECT_EXPR_HANDLE (info);
-	if (((minfo->kind >> ((argno + 1) * METAFN_KIND_SHIFT))
-	     & METAFN_KIND_MASK) == METAFN_KIND_ARG_TINFO)
-	  {
-	    if (eval_is_type (ht) != boolean_true_node)
-	      return throw_exception_nontype (loc, ctx, fun, non_constant_p,
-					      jump_target);
-	  }
+	if (METAFN_KIND_ARG (argno) == METAFN_KIND_ARG_TINFO
+	    && eval_is_type (ht) != boolean_true_node)
+	  return throw_exception_nontype (loc, ctx, fun, non_constant_p,
+					  jump_target);
 	if (argno == 0)
 	  {
 	    kind = REFLECT_EXPR_KIND (info);
@@ -8072,6 +8086,14 @@ consteval_only_p (tree t)
   if (!t)
     return false;
 
+  if (TREE_CODE (t) == TREE_VEC)
+    {
+      for (tree arg : tree_vec_range (t))
+	if (arg && consteval_only_p (arg))
+	  return true;
+      return false;
+    }
+
   /* We need the complete type otherwise we'd have no fields for class
      templates and thus come up with zilch for things like
        template<typename T>
@@ -8084,8 +8106,117 @@ consteval_only_p (tree t)
   return !!cp_walk_tree (&t, consteval_only_type_r, &visited, &visited);
 }
 
+/* A walker for check_out_of_consteval_use_r.  It cannot be a lambda, because
+   we have to call this recursively.  */
+
+static tree
+check_out_of_consteval_use_r (tree *tp, int *walk_subtrees, void *pset)
+{
+  tree t = *tp;
+
+  /* No need to look into types or unevaluated operands.  */
+  if (TYPE_P (t)
+      || unevaluated_p (TREE_CODE (t))
+      /* Don't walk INIT_EXPRs, because we'd emit bogus errors about
+	 member initializers.  */
+      || TREE_CODE (t) == INIT_EXPR
+      /* And don't recurse on DECL_EXPRs.  */
+      || TREE_CODE (t) == DECL_EXPR)
+    {
+      *walk_subtrees = false;
+      return NULL_TREE;
+    }
+
+  /* A subexpression of a manifestly constant-evaluated expression is
+     an immediate function context.  For example,
+
+      consteval void foo (std::meta::info) { }
+      void g() { foo (^^void); }
+
+      is all good.  */
+  if (tree decl = cp_get_callee_fndecl_nofold (t))
+    if (immediate_invocation_p (decl))
+      {
+	*walk_subtrees = false;
+	return NULL_TREE;
+      }
+
+  if (VAR_P (t) && DECL_HAS_VALUE_EXPR_P (t))
+    {
+      tree vexpr = DECL_VALUE_EXPR (t);
+      if (tree ret = cp_walk_tree (&vexpr, check_out_of_consteval_use_r, pset,
+				   (hash_set<tree> *) pset))
+	return ret;
+    }
+
+  if (TREE_CODE (t) == BIND_EXPR)
+    {
+      if (tree r = cp_walk_tree (&BIND_EXPR_BODY (t),
+				 check_out_of_consteval_use_r, pset,
+				 static_cast<hash_set<tree> *>(pset)))
+	return r;
+      /* Don't walk BIND_EXPR_VARS.  */
+      *walk_subtrees = false;
+      return NULL_TREE;
+    }
+
+  if (TREE_CODE (t) == IF_STMT)
+    {
+      if (IF_STMT_CONSTEVAL_P (t))
+	{
+	  if (tree r = cp_walk_tree (&ELSE_CLAUSE (t),
+				     check_out_of_consteval_use_r, pset,
+				     static_cast<hash_set<tree> *>(pset)))
+	    return r;
+	  /* Don't walk the consteval branch.  */
+	  *walk_subtrees = false;
+	  return NULL_TREE;
+	}
+      else if (IF_STMT_CONSTEXPR_P (t))
+	{
+	  if (tree r = cp_walk_tree (&THEN_CLAUSE (t),
+				     check_out_of_consteval_use_r, pset,
+				     static_cast<hash_set<tree> *>(pset)))
+	    return r;
+	  if (tree r = cp_walk_tree (&ELSE_CLAUSE (t),
+				     check_out_of_consteval_use_r, pset,
+				     static_cast<hash_set<tree> *>(pset)))
+	    return r;
+	  /* Don't walk the condition -- it's a manifestly constant-evaluated
+	     context.  */
+	  *walk_subtrees = false;
+	  return NULL_TREE;
+	}
+    }
+
+  /* Now check the type to see if we are dealing with a consteval-only
+     expression.  */
+  if (!consteval_only_p (t))
+    return NULL_TREE;
+
+  /* Already escalated?  */
+  if (current_function_decl
+      && DECL_IMMEDIATE_FUNCTION_P (current_function_decl))
+    {
+      *walk_subtrees = false;
+      return NULL_TREE;
+    }
+
+  /* We might have to escalate if we are in an immediate-escalating
+     function.  */
+  if (immediate_escalating_function_p (current_function_decl))
+    {
+      promote_function_to_consteval (current_function_decl);
+      *walk_subtrees = false;
+      return NULL_TREE;
+    }
+
+  *walk_subtrees = false;
+  return t;
+}
+
 /* Detect if a consteval-only expression EXPR or a consteval-only
-   variable EXPR not declared constexpr/constinit is used outside
+   variable EXPR not declared constexpr is used outside
    a manifestly constant-evaluated context.  E.g.:
 
      void f() {
@@ -8107,90 +8238,24 @@ consteval_only_p (tree t)
 bool
 check_out_of_consteval_use (tree expr, bool complain/*=true*/)
 {
-  if (!flag_reflection || in_immediate_context ())
+  if (!flag_reflection || in_immediate_context () || expr == NULL_TREE)
     return false;
 
-  auto walker = [](tree *tp, int *walk_subtrees, void *) -> tree
-    {
-      tree t = *tp;
+  if (VAR_P (expr) && DECL_DECLARED_CONSTEXPR_P (expr))
+    return false;
 
-      /* No need to look into types or unevaluated operands.  */
-      if (TYPE_P (t)
-	  || unevaluated_p (TREE_CODE (t))
-	  /* Don't walk INIT_EXPRs, because we'd emit bogus errors about
-	     member initializers.  */
-	  || TREE_CODE (t) == INIT_EXPR
-	  /* Don't walk BIND_EXPR_VARS.  */
-	  || TREE_CODE (t) == BIND_EXPR
-	  /* And don't recurse on DECL_EXPRs.  */
-	  || TREE_CODE (t) == DECL_EXPR)
-	{
-	  *walk_subtrees = false;
-	  return NULL_TREE;
-	}
-
-      /* A subexpression of a manifestly constant-evaluated expression is
-	 an immediate function context.  For example,
-
-	   consteval void foo (std::meta::info) { }
-	   void g() { foo (^^void); }
-
-	 is all good.  */
-      if (tree decl = cp_get_callee_fndecl_nofold (t))
-	if (immediate_invocation_p (decl))
-	  {
-	    *walk_subtrees = false;
-	    return NULL_TREE;
-	  }
-
-      if (VAR_P (t)
-	  && (DECL_DECLARED_CONSTEXPR_P (t) || DECL_DECLARED_CONSTINIT_P (t)))
-	/* This is fine, don't bother checking the type.  */
-	return NULL_TREE;
-
-      /* Now check the type to see if we are dealing with a consteval-only
-	 expression.  */
-      if (!consteval_only_p (t))
-	return NULL_TREE;
-
-      if (current_function_decl
-	  /* Already escalated.  */
-	  && (DECL_IMMEDIATE_FUNCTION_P (current_function_decl)
-	      /* These functions are magic.  */
-	      || is_std_allocator_allocate (current_function_decl)))
-	{
-	  *walk_subtrees = false;
-	  return NULL_TREE;
-	}
-
-      /* We might have to escalate if we are in an immediate-escalating
-	 function.  */
-      if (immediate_escalating_function_p (current_function_decl))
-	{
-	  promote_function_to_consteval (current_function_decl);
-	  *walk_subtrees = false;
-	  return NULL_TREE;
-	}
-
-      *walk_subtrees = false;
-      return t;
-    };
-
-  if (tree t = cp_walk_tree_without_duplicates (&expr, walker, nullptr))
+  hash_set<tree> pset;
+  if (tree t = cp_walk_tree (&expr, check_out_of_consteval_use_r, &pset, &pset))
     {
       if (complain)
 	{
-	  if (VAR_P (t))
+	  if (VAR_P (t) && !DECL_DECLARED_CONSTEXPR_P (t))
 	    {
 	      auto_diagnostic_group d;
 	      error_at (cp_expr_loc_or_input_loc (t),
 			"consteval-only variable %qD not declared %<constexpr%> "
 			"used outside a constant-evaluated context", t);
-	      if (TREE_STATIC (t) || CP_DECL_THREAD_LOCAL_P (t))
-		inform (DECL_SOURCE_LOCATION (t), "add %<constexpr%> or "
-			"%<constinit%>");
-	      else
-		inform (DECL_SOURCE_LOCATION (t), "add %<constexpr%>");
+	      inform (DECL_SOURCE_LOCATION (t), "add %<constexpr%>");
 	    }
 	  else
 	    error_at (cp_expr_loc_or_input_loc (t),
@@ -8231,6 +8296,9 @@ compare_reflections (tree lhs, tree rhs)
   // ??? Can we do something better?
   lhs = maybe_get_first_fn (lhs);
   rhs = maybe_get_first_fn (rhs);
+
+  /* First handle reflection-specific comparisons, then fall back to
+     cp_tree_equal.  */
   if (lkind == REFLECT_PARM)
     {
       lhs = maybe_update_function_parm (lhs);
@@ -8244,27 +8312,19 @@ compare_reflections (tree lhs, tree rhs)
 	    && tree_int_cst_equal (TREE_VEC_ELT (lhs, 3),
 				   TREE_VEC_ELT (rhs, 3))
 	    && TREE_VEC_ELT (lhs, 4) == TREE_VEC_ELT (rhs, 4));
-
-  if (lhs == rhs)
-    return true;
-
-  /* Some trees are not shared.  */
-  if (TREE_CODE (lhs) == TREE_CODE (rhs))
-    switch (TREE_CODE (lhs))
-      {
-      case ARRAY_REF:
-      case COMPONENT_REF:
-      case REAL_CST:
-	return cp_tree_equal (lhs, rhs);
-      default:
-	break;
-      }
-
-  if (TYPE_P (lhs) && TYPE_P (rhs))
-    if (!typedef_variant_p (lhs) && !typedef_variant_p (rhs))
+  else if (lkind == REFLECT_ANNOTATION)
+    return lhs == rhs;
+  else if (TYPE_P (lhs) && TYPE_P (rhs))
+    {
+      /* Given "using A = int;", "^^int != ^^A" should hold.  */
+      if (typedef_variant_p (lhs) != typedef_variant_p (rhs))
+	return false;
+      /* This is for comparing function types.  E.g.,
+	  auto fn() -> int; type_of(^^fn) == ^^auto()->int;  */
       return same_type_p (lhs, rhs);
+    }
 
-  return false;
+  return cp_tree_equal (lhs, rhs);
 }
 
 /* Return true if T is a valid splice-type-specifier.
@@ -8304,8 +8364,7 @@ check_consteval_only_fn (tree decl)
   if (!DECL_IMMEDIATE_FUNCTION_P (decl)
       && consteval_only_p (decl)
       /* But if the function can be escalated, merrily we roll along.  */
-      && !immediate_escalating_function_p (decl)
-      && !is_std_allocator_allocate (decl))
+      && !immediate_escalating_function_p (decl))
     error_at (DECL_SOURCE_LOCATION (decl),
 	      "function of consteval-only type must be declared %qs",
 	      "consteval");
@@ -8331,8 +8390,8 @@ check_splice_expr (location_t loc, location_t start_loc, tree t,
 	  if (TYPE_P (t))
 	    {
 	      auto_diagnostic_group d;
-	      error_at (loc, "expected a reflection of an expression instead "
-			"of type %qT", t);
+	      error_at (loc, "expected a reflection of an expression");
+	      inform_tree_category (t);
 	      if (start_loc != UNKNOWN_LOCATION)
 		{
 		  rich_location richloc (line_table, start_loc);
@@ -8345,8 +8404,11 @@ check_splice_expr (location_t loc, location_t start_loc, tree t,
 			"a type-only context");
 	    }
 	  else
-	    error_at (loc, "expected a reflection of an expression instead "
-		      "of %qD", t);
+	    {
+	      auto_diagnostic_group d;
+	      error_at (loc, "expected a reflection of an expression");
+	      inform_tree_category (t);
+	    }
 	}
       return false;
     }

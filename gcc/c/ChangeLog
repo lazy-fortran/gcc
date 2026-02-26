@@ -1,3 +1,36 @@
+2026-02-18  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/123365
+	* c-decl.cc (build_compound_literal): Call relayout_decl
+	after completing the type.
+
+2026-02-13  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* Make-lang.in (cc1.fda): Likewise.
+
+2026-02-06  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	PR middle-end/123892
+	* c-decl.cc: Replace CONST_CAST with const_cast<>.
+	* c-parser.cc: Likewise.
+
+2026-02-05  Michal Jires  <mjires@suse.cz>
+
+	PR testsuite/123559
+	* c-decl.cc (c_write_global_declarations_1): Check and suppress
+	OPT_Wunused.
+	* c-typeck.cc (build_asm_expr): Suppress OPT_Wunused.
+
+2026-02-05  Jakub Jelinek  <jakub@redhat.com>
+
+	Revert:
+	2026-02-05  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/101312
+	* c-tree.h (c_build_lang_qualified_type): Declare.
+	* c-objc-common.h (LANG_HOOKS_BUILD_LANG_QUALIFIED_TYPE): Define.
+	* c-objc-common.cc (c_build_lang_qualified_type): New function.
+
 2026-01-28  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
 
 	PR c++/102846

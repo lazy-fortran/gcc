@@ -853,7 +853,7 @@ fix_string_type (tree value)
     {
       error ("size of string literal is too large");
       length = tree_to_shwi (TYPE_MAX_VALUE (ssizetype)) / charsz * charsz;
-      char *str = CONST_CAST (char *, TREE_STRING_POINTER (value));
+      char *str = const_cast<char *> (TREE_STRING_POINTER (value));
       memset (str + length, '\0',
 	      MIN (TREE_STRING_LENGTH (value) - length, charsz));
       TREE_STRING_LENGTH (value) = length;
@@ -7231,6 +7231,16 @@ fold_offsetof (tree expr, tree type, enum tree_code ctx)
     {
     case ERROR_MARK:
       return expr;
+
+    case REALPART_EXPR:
+     return fold_offsetof (TREE_OPERAND (expr, 0), type, code);
+
+    case IMAGPART_EXPR:
+     base = fold_offsetof (TREE_OPERAND (expr, 0), type, code);
+     if (base == error_mark_node)
+	return base;
+     off = TYPE_SIZE_UNIT (TREE_TYPE (TREE_TYPE (TREE_OPERAND (expr, 0))));
+     break;
 
     case VAR_DECL:
       error ("cannot apply %<offsetof%> to static data member %qD", expr);

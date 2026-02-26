@@ -1562,6 +1562,16 @@ ftms = {
 };
 
 ftms = {
+  name = format_path;
+  // 202403 P2845R8 Formatting of std::filesystem::path
+  values = {
+    v = 202403;
+    cxxmin = 26;
+    hosted = yes;
+  };
+};
+
+ftms = {
   name = freestanding_algorithm;
   values = {
     v = 202311;
@@ -1629,6 +1639,14 @@ ftms = {
   name = invoke_r;
   values = {
     v = 202106;
+    cxxmin = 23;
+  };
+};
+
+ftms = {
+  name = associative_heterogeneous_erasure;
+  values = {
+    v = 202110;
     cxxmin = 23;
   };
 };
@@ -2263,6 +2281,16 @@ ftms = {
 
 ftms = {
   name = reflection;
+  values = {
+    v = 202506;
+    cxxmin = 26;
+    extra_cond = "__cpp_impl_reflection >= 202506L";
+    cxx11abi = yes;
+  };
+};
+
+ftms = {
+  name = define_static;
   values = {
     v = 202506;
     cxxmin = 26;

@@ -644,10 +644,7 @@ process_use (stmt_vec_info stmt_vinfo, tree use, loop_vec_info loop_vinfo,
 	   && STMT_VINFO_DEF_TYPE (stmt_vinfo) == vect_induction_def
 	   && (PHI_ARG_DEF_FROM_EDGE (stmt_vinfo->stmt,
 				      loop_latch_edge (bb->loop_father))
-	       == use)
-	   && (!LOOP_VINFO_EARLY_BREAKS (loop_vinfo)
-	       || (gimple_bb (stmt_vinfo->stmt)
-		   != LOOP_VINFO_LOOP (loop_vinfo)->header)))
+	       == use))
     {
       if (dump_enabled_p ())
 	dump_printf_loc (MSG_NOTE, vect_location,
@@ -3184,7 +3181,7 @@ vect_get_strided_load_store_ops (stmt_vec_info stmt_info, slp_tree node,
 	 .MASK_LEN_SCATTER_STORE (vectp_a.9_7, ... );
 	 vectp_a.9_26 = vectp_a.9_7 + ivtmp_8;  */
       tree loop_len
-	= vect_get_loop_len (loop_vinfo, gsi, loop_lens, 1, vectype, 0, 0);
+	= vect_get_loop_len (loop_vinfo, gsi, loop_lens, 1, vectype, 0, 0, true);
       tree tmp
 	= fold_build2 (MULT_EXPR, sizetype,
 		       fold_convert (sizetype, unshare_expr (DR_STEP (dr))),
@@ -3255,7 +3252,7 @@ vect_get_loop_variant_data_ptr_increment (
      addr = addr + .SELECT_VL (ARG..) * step;
   */
   tree loop_len
-    = vect_get_loop_len (loop_vinfo, gsi, loop_lens, 1, aggr_type, 0, 0);
+    = vect_get_loop_len (loop_vinfo, gsi, loop_lens, 1, aggr_type, 0, 0, true);
   tree len_type = TREE_TYPE (loop_len);
   /* Since the outcome of .SELECT_VL is element size, we should adjust
      it into bytesize so that it can be used in address pointer variable
@@ -3700,7 +3697,6 @@ vectorizable_call (vec_info *vinfo,
   internal_fn cond_fn = (internal_fn_mask_index (ifn) != -1
 			 ? ifn : get_conditional_internal_fn (ifn));
   internal_fn cond_len_fn = get_len_internal_fn (cond_fn);
-  int len_opno = internal_fn_len_index (cond_len_fn);
   vec_loop_masks *masks = (loop_vinfo ? &LOOP_VINFO_MASKS (loop_vinfo) : NULL);
   vec_loop_lens *lens = (loop_vinfo ? &LOOP_VINFO_LENS (loop_vinfo) : NULL);
   unsigned int nvectors = vect_get_num_copies (vinfo, slp_node);
@@ -3768,26 +3764,22 @@ vectorizable_call (vec_info *vinfo,
   bool masked_loop_p = loop_vinfo && LOOP_VINFO_FULLY_MASKED_P (loop_vinfo);
   bool len_loop_p = loop_vinfo && LOOP_VINFO_FULLY_WITH_LENGTH_P (loop_vinfo);
   unsigned int vect_nargs = nargs;
-  if (len_loop_p)
+  if (len_loop_p && (reduc_idx >= 0 || could_trap || mask_opno >= 0))
     {
-      if (len_opno >= 0)
-	{
-	  ifn = cond_len_fn;
-	  /* COND_* -> COND_LEN_* takes 2 extra arguments:LEN,BIAS.  */
-	  vect_nargs += 2;
-	  /* But unless there's a mask argument already we need that
-	     as well, and an else value.  */
-	  if (mask_opno == -1)
-	    vect_nargs += 2;
-	}
-      else if (reduc_idx >= 0)
-	gcc_unreachable ();
+      ifn = cond_len_fn;
+      /* COND_* -> COND_LEN_* takes 2 extra arguments:LEN,BIAS.  */
+      vect_nargs += 2;
+      /* But unless there's a mask argument already we need that
+	 as well, and an else value.  */
+      if (mask_opno == -1)
+	vect_nargs += 2;
     }
   else if (masked_loop_p && mask_opno == -1 && (reduc_idx >= 0 || could_trap))
     {
       ifn = cond_fn;
       vect_nargs += 2;
     }
+  int len_opno = internal_fn_len_index (ifn);
   if (clz_ctz_arg1)
     ++vect_nargs;
 
@@ -3828,7 +3820,7 @@ vectorizable_call (vec_info *vinfo,
 	      int varg = 0;
 	      /* Add the mask if necessary.  */
 	      if ((masked_loop_p || len_loop_p) && mask_opno == -1
-		  && (reduc_idx >= 0 || could_trap))
+		  && internal_fn_mask_index (ifn) != -1)
 		{
 		  gcc_assert (internal_fn_mask_index (ifn) == varg);
 		  if (masked_loop_p)
@@ -3854,7 +3846,7 @@ vectorizable_call (vec_info *vinfo,
 		}
 	      /* Add the else value if necessary.  */
 	      if ((masked_loop_p || len_loop_p) && mask_opno == -1
-		 && (reduc_idx >= 0 || could_trap))
+		  && internal_fn_else_index (ifn) != -1)
 		{
 		  gcc_assert (internal_fn_else_index (ifn) == varg);
 		  if (reduc_idx >= 0)
@@ -3896,7 +3888,7 @@ vectorizable_call (vec_info *vinfo,
 		    {
 		      unsigned int vec_num = vec_oprnds0.length ();
 		      tree len = vect_get_loop_len (loop_vinfo, gsi, lens,
-						    vec_num, vectype_out, i, 1);
+						    vec_num, vectype_out, i, 1, true);
 		      signed char biasval
 			= LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS (loop_vinfo);
 		      tree bias = build_int_cst (intQI_type_node, biasval);
@@ -7106,7 +7098,7 @@ vectorizable_operation (vec_info *vinfo,
 	  if (len_loop_p)
 	    {
 	      tree len = vect_get_loop_len (loop_vinfo, gsi, lens,
-					    vec_num, vectype, i, 1);
+					    vec_num, vectype, i, 1, true);
 	      signed char biasval
 		= LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS (loop_vinfo);
 	      tree bias = build_int_cst (intQI_type_node, biasval);
@@ -8822,7 +8814,7 @@ vectorizable_store (vec_info *vinfo,
 	    {
 	      if (loop_lens)
 		final_len = vect_get_loop_len (loop_vinfo, gsi, loop_lens,
-					       ncopies, vectype, j, 1);
+					       ncopies, vectype, j, 1, true);
 	      else
 		final_len = size_int (TYPE_VECTOR_SUBPARTS (vectype));
 	      signed char biasval
@@ -9020,7 +9012,7 @@ vectorizable_store (vec_info *vinfo,
 		  if (loop_lens)
 		    final_len = vect_get_loop_len (loop_vinfo, gsi,
 						   loop_lens, num_stmts,
-						   vectype, j, 1);
+						   vectype, j, 1, true);
 		  else
 		    final_len = size_int (TYPE_VECTOR_SUBPARTS (vectype));
 
@@ -9404,7 +9396,7 @@ vectorizable_store (vec_info *vinfo,
 	  unsigned factor
 	    = (new_ovmode == vmode) ? 1 : GET_MODE_UNIT_SIZE (vmode);
 	  final_len = vect_get_loop_len (loop_vinfo, gsi, loop_lens,
-					 vec_num, vectype, i, factor);
+					 vec_num, vectype, i, factor, true);
 	}
       else if (final_mask)
 	{
@@ -10767,7 +10759,7 @@ vectorizable_load (vec_info *vinfo,
 	    {
 	      if (loop_lens)
 		final_len = vect_get_loop_len (loop_vinfo, gsi, loop_lens,
-					       ncopies, vectype, j, 1);
+					       ncopies, vectype, j, 1, true);
 	      else
 		final_len = size_int (TYPE_VECTOR_SUBPARTS (vectype));
 	      signed char biasval
@@ -10975,7 +10967,7 @@ vectorizable_load (vec_info *vinfo,
 		{
 		  if (loop_lens)
 		    final_len = vect_get_loop_len (loop_vinfo, gsi, loop_lens,
-						   vec_num, vectype, i, 1);
+						   vec_num, vectype, i, 1, true);
 		  else
 		    final_len = build_int_cst (sizetype,
 					       TYPE_VECTOR_SUBPARTS (vectype));
@@ -11427,7 +11419,7 @@ vectorizable_load (vec_info *vinfo,
 		unsigned factor
 		  = (new_ovmode == vmode) ? 1 : GET_MODE_UNIT_SIZE (vmode);
 		final_len = vect_get_loop_len (loop_vinfo, gsi, loop_lens,
-					       vec_num, vectype, i, factor);
+					       vec_num, vectype, i, factor, true);
 	      }
 	    else if (final_mask)
 	      {
@@ -12506,8 +12498,10 @@ vectorizable_condition (vec_info *vinfo,
 	    {
 	      if (lens)
 		{
+		  /* ??? Do we really want the adjusted LEN here?  Isn't this
+		     based on number of elements?  */
 		  len = vect_get_loop_len (loop_vinfo, gsi, lens,
-					   vec_num, vectype, i, 1);
+					   vec_num, vectype, i, 1, true);
 		  signed char biasval
 		    = LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS (loop_vinfo);
 		  bias = build_int_cst (intQI_type_node, biasval);

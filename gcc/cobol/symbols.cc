@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Symas Corporation
+ * Copyright (c) 2021-2026 Symas Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -814,6 +814,40 @@ cbl_field_t::set_attr( cbl_field_attr_t attr ) {
 uint64_t
 cbl_field_t::clear_attr( cbl_field_attr_t attr ) {
   return this->attr &= ~uint64_t(attr);
+}
+
+// Test various ways a Numeric Edited picture can describe a signed value.
+uint64_t 
+cbl_field_t::set_signable() {
+  gcc_assert(type == FldNumericEdited);
+  gcc_assert(data.picture);
+  char *p = xstrdup(data.picture);
+  char *pend;
+  // Look to see if this is a floating-point numeric-edited:
+  pend = strchr(p, ascii_e);
+  if( !pend ) {
+    pend = strchr(p, ascii_E);
+  }
+  if( pend ) {
+    // We end our inspection at the 'E'
+    *pend = '\0';
+  }
+  size_t len = strlen(p);
+  if( p[0] == ascii_plus || p[0] == ascii_minus ) {
+    // The very first character is plus or minus
+    set_attr(signable_e);
+  } else if( len >= 1 && (p[len-1] == ascii_plus || p[len-1] == ascii_minus)) {
+    // The very last character is plus or minus
+    set_attr(signable_e);
+  }
+  else if( len >= 2 &&
+     (   (TOUPPER(p[len-2]) == ascii_D && TOUPPER(p[len-1]) == ascii_B)
+      || (TOUPPER(p[len-2]) == ascii_C && TOUPPER(p[len-1]) == ascii_R) ) ) {
+    // The last two characters are DB or CR
+    set_attr(signable_e);
+  }
+  free(p);
+  return attr;
 }
 
 static uint32_t
@@ -1834,7 +1868,12 @@ symbols_update( size_t first, bool parsed_ok ) {
           return 0;
         }
       }
-      // Better to report an error than to fail mysteriously with "0 errors".
+      /*
+       * The parser sets an incomplete field with 0 capacity to FldInvalid.  If
+       * the field proves to be a group symbol_field_add() sets it to FldGroup
+       * and its size is calculated above.  If that doesn't happen, it gets
+       * flagged here.
+       */
       if( yydebug || parse_error_count() == 0 ) {
         if( field->type == FldInvalid ) {
           ERROR_FIELD(field, "line %d: %s %s requires PICTURE",
@@ -2261,7 +2300,8 @@ symbol_table_init(void) {
     { FldAlphanumeric, LOW_VALUE_E | constq | register_e,
       {1,1,0,0, "L\0\xFF"}, 0, "LOW_VALUES", cp1252 },
     { FldAlphanumeric, ZERO_VALUE_E | constq | register_e,
-      {1,1,0,0, "0"}, 0, "ZEROS", cp1252 },
+      {1,1,0,0, "0"}, 0, "ZEROS", cp1252 }, // Don't change "ZEROS"; there are
+                                            // things that depend on it.
     { FldAlphanumeric, HIGH_VALUE_E | constq | register_e,
       {1,1,0,0, "H\0\xFF"}, 0, "HIGH_VALUES", cp1252 },
     // IBM standard: QUOTE is a double-quote unless APOST compiler option
@@ -3421,8 +3461,47 @@ cbl_alphabet_t::also( const YYLTYPE& loc, size_t ch ) {
   error_msg(loc, "ALSO value %zu is unknown", ch);
 }
 
-using std::deque;
-static deque<cbl_field_t*> stack;
+static symbol_temporaries_t program_temporaries;
+
+/*
+ * Supply a reference to the current list of temporaries for use by codegen to free
+ * the memory if it decides to return to the caller.
+ */
+symbol_temporaries_t&
+symbol_temporaries() {
+  return program_temporaries;
+}
+
+symbol_temporaries_t
+symbol_temporary_alphanumerics() {
+  symbol_temporaries_t output;
+  std::copy_if( program_temporaries.begin(),
+                program_temporaries.end(),
+                std::back_inserter(output), 
+                []( auto f ) {
+                  switch(f->type) {
+                  case FldAlphaEdited:
+                  case FldAlphanumeric:
+                    return f->has_attr(intermediate_e);
+                  case FldFloat:
+                  case FldNumericBin5:
+                  case FldNumericBinary:
+                  case FldNumericDisplay:
+                  case FldNumericEdited:
+                  case FldPacked:
+                  default:
+                    break;
+                  }
+                  return false;
+                } );
+  for( cbl_field_t *f : output ) {
+    auto p = std::find( program_temporaries.begin(),
+                        program_temporaries.end(),
+                        f );
+    program_temporaries.erase(p);
+  }
+  return output;
+}
 
 /*
  * Allocate a temporary field. Assign the type and name, if supplied.  Caller
@@ -3434,8 +3513,8 @@ new_temporary_impl( enum cbl_field_type_t type, const cbl_name_t name = nullptr 
   extern int yylineno;
   static const struct cbl_field_t empty_alpha = {
                                 FldAlphanumeric, intermediate_e,
-                                {MAXIMUM_ALPHA_LENGTH,
-                                 MAXIMUM_ALPHA_LENGTH, 0, 0, NULL} };
+                                {0,
+                                 0, 0, 0, NULL} };
   static const struct cbl_field_t empty_float = {
                                 FldFloat, intermediate_e,
                                 {16, 16, 32, 0, NULL} };
@@ -3497,6 +3576,8 @@ new_temporary_impl( enum cbl_field_type_t type, const cbl_name_t name = nullptr 
   f->data.initial = name; // capture e.g. the function name
 
   f->codeset.set();
+
+  program_temporaries.push_back(f);
 
   return f;
 }
@@ -3700,9 +3781,8 @@ symbol_temporaries_free() {
 }
 
 cbl_field_t *
-new_alphanumeric( size_t capacity, const cbl_name_t name, cbl_encoding_t encoding ) {
+new_alphanumeric( const cbl_name_t name, cbl_encoding_t encoding ) {
   cbl_field_t * field = new_temporary_impl(FldAlphanumeric, name);
-  field->set_capacity( capacity );
   if( encoding != no_encoding_e ) {
     field->codeset.set(encoding);
   }
@@ -4094,10 +4174,15 @@ cbl_field_t::encode( size_t srclen, cbl_loc_t loc ) {
 
     if( inbytesleft == 0 ) {
       if( data.all() ) {
-        for( size_t len = outbuf - data.initial;
-             outbuf + len <= data.initial + data.capacity();
-             outbuf += len ) {
-          std::copy( data.initial, data.initial + len, outbuf );
+        size_t len = outbuf - data.initial;
+        // We need to repeatedly append the first len bytes of data.initial to
+        // data.initial until it is full.  Thus ALL "ABC" becomes "ABCABC..."
+        char *d = const_cast<char*>(data.initial);
+        size_t source_i = 0;
+        size_t dest_i   = len;
+        while( dest_i < static_cast<size_t>(data.capacity()) ) {
+          d[dest_i++] = d[source_i++];
+          source_i %= len;
         }
       }
       if( is_literal(this) ) {

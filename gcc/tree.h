@@ -404,7 +404,7 @@ code_helper::is_builtin_fn () const
 (*tree_int_cst_elt_check ((T), (I), __FILE__, __LINE__, __FUNCTION__))
 
 #define TREE_VEC_ELT_CHECK(T, I) \
-(*(CONST_CAST2 (tree *, typeof (T)*, \
+(*(const_cast<tree *> ( \
      tree_vec_elt_check ((T), (I), __FILE__, __LINE__, __FUNCTION__))))
 
 #define OMP_CLAUSE_ELT_CHECK(T, I) \
@@ -412,7 +412,7 @@ code_helper::is_builtin_fn () const
 
 /* Special checks for TREE_OPERANDs.  */
 #define TREE_OPERAND_CHECK(T, I) \
-(*(CONST_CAST2 (tree*, typeof (T)*, \
+(*(const_cast<tree *> ( \
      tree_operand_check ((T), (I), __FILE__, __LINE__, __FUNCTION__))))
 
 #define TREE_OPERAND_CHECK_CODE(T, CODE, I) \
@@ -568,12 +568,12 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
    we are not modifying the tree itself.  */
 
 #define STRIP_NOPS(EXP) \
-  (EXP) = tree_strip_nop_conversions (CONST_CAST_TREE (EXP))
+  (EXP) = tree_strip_nop_conversions (const_cast<tree> (EXP))
 
 /* Like STRIP_NOPS, but don't let the signedness change either.  */
 
 #define STRIP_SIGN_NOPS(EXP) \
-  (EXP) = tree_strip_sign_nop_conversions (CONST_CAST_TREE (EXP))
+  (EXP) = tree_strip_sign_nop_conversions (const_cast<tree> (EXP))
 
 /* Like STRIP_NOPS, but don't alter the TREE_TYPE either.  */
 
@@ -595,7 +595,7 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
    in use to provide a location_t.  */
 
 #define STRIP_ANY_LOCATION_WRAPPER(EXP) \
-  (EXP) = tree_strip_any_location_wrapper (CONST_CAST_TREE (EXP))
+  (EXP) = tree_strip_any_location_wrapper (const_cast<tree> (EXP))
 
 /* Nonzero if TYPE represents a vector type.  */
 
@@ -1938,6 +1938,16 @@ class auto_suppress_location_wrappers
 /* Nonzero if OpenACC 'readonly' modifier set, used for 'copyin'.  */
 #define OMP_CLAUSE_MAP_READONLY(NODE) \
   TREE_READONLY (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP))
+
+/* Nonzero if the size (or bias) is not known by the front end and needs to be
+   adjusted in the middle end.  */
+#define OMP_CLAUSE_MAP_SIZE_NEEDS_ADJUSTMENT(NODE) \
+  TREE_CONSTANT (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP))
+
+/* Nonzero on a map clause that is only used internally by the gimplifier and
+   can thus be removed at the end of the GIMPLE pass.  */
+#define OMP_CLAUSE_MAP_GIMPLE_ONLY(NODE) \
+  TREE_USED (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP))
 
 /* Same as above, for use in OpenACC cache directives.  */
 #define OMP_CLAUSE__CACHE__READONLY(NODE) \
@@ -3991,7 +4001,7 @@ tree_int_cst_elt_check (const_tree __t, int __i,
   if (__i < 0 || __i >= __t->base.u.int_length.extended)
     tree_int_cst_elt_check_failed (__i, __t->base.u.int_length.extended,
 				   __f, __l, __g);
-  return &CONST_CAST_TREE (__t)->int_cst.val[__i];
+  return &const_cast<tree> (__t)->int_cst.val[__i];
 }
 
 inline HOST_WIDE_INT *
@@ -4003,7 +4013,7 @@ tree_int_cst_elt_check (tree __t, int __i,
   if (__i < 0 || __i >= __t->base.u.int_length.extended)
     tree_int_cst_elt_check_failed (__i, __t->base.u.int_length.extended,
 				   __f, __l, __g);
-  return &CONST_CAST_TREE (__t)->int_cst.val[__i];
+  return &const_cast<tree> (__t)->int_cst.val[__i];
 }
 
 /* Workaround -Wstrict-overflow false positive during profiledbootstrap.  */
@@ -4021,7 +4031,7 @@ tree_vec_elt_check (tree __t, int __i,
     tree_check_failed (__t, __f, __l, __g, TREE_VEC, 0);
   if (__i < 0 || __i >= __t->base.u.length)
     tree_vec_elt_check_failed (__i, __t->base.u.length, __f, __l, __g);
-  return &CONST_CAST_TREE (__t)->vec.a[__i];
+  return &const_cast<tree> (__t)->vec.a[__i];
 }
 
 # if GCC_VERSION >= 4006
@@ -4279,7 +4289,7 @@ tree_vec_elt_check (const_tree __t, int __i,
     tree_check_failed (__t, __f, __l, __g, TREE_VEC, 0);
   if (__i < 0 || __i >= __t->base.u.length)
     tree_vec_elt_check_failed (__i, __t->base.u.length, __f, __l, __g);
-  return CONST_CAST (const_tree *, &__t->vec.a[__i]);
+  return const_cast<const_tree *> (&__t->vec.a[__i]);
   //return &__t->vec.a[__i];
 }
 
@@ -4295,7 +4305,7 @@ omp_clause_elt_check (const_tree __t, int __i,
     tree_check_failed (__t, __f, __l, __g, OMP_CLAUSE, 0);
   if (__i < 0 || __i >= omp_clause_num_ops [__t->omp_clause.code])
     omp_clause_operand_check_failed (__i, __t, __f, __l, __g);
-  return CONST_CAST (const_tree *, &__t->omp_clause.ops[__i]);
+  return const_cast<const_tree *> (&__t->omp_clause.ops[__i]);
 }
 
 inline const_tree
@@ -4332,7 +4342,7 @@ tree_operand_check (tree __t, int __i,
   const_tree __u = EXPR_CHECK (__t);
   if (__i < 0 || __i >= TREE_OPERAND_LENGTH (__u))
     tree_operand_check_failed (__i, __u, __f, __l, __g);
-  return &CONST_CAST_TREE (__u)->exp.operands[__i];
+  return &const_cast<tree> (__u)->exp.operands[__i];
 }
 
 inline tree *
@@ -4353,7 +4363,7 @@ tree_operand_check (const_tree __t, int __i,
   const_tree __u = EXPR_CHECK (__t);
   if (__i < 0 || __i >= TREE_OPERAND_LENGTH (__u))
     tree_operand_check_failed (__i, __u, __f, __l, __g);
-  return CONST_CAST (const_tree *, &__u->exp.operands[__i]);
+  return const_cast<const_tree *> (&__u->exp.operands[__i]);
 }
 
 inline const_tree *
@@ -4364,7 +4374,7 @@ tree_operand_check_code (const_tree __t, enum tree_code __code, int __i,
     tree_check_failed (__t, __f, __l, __g, __code, 0);
   if (__i < 0 || __i >= TREE_OPERAND_LENGTH (__t))
     tree_operand_check_failed (__i, __t, __f, __l, __g);
-  return CONST_CAST (const_tree *, &__t->exp.operands[__i]);
+  return const_cast<const_tree *> (&__t->exp.operands[__i]);
 }
 
 #endif

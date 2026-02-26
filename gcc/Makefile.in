@@ -3807,7 +3807,8 @@ TEXI_GCCINT_FILES = gccint.texi gcc-common.texi gcc-vers.texi		\
 	 gnu.texi gpl_v3.texi fdl.texi contrib.texi languages.texi	\
 	 sourcebuild.texi gty.texi libgcc.texi cfg.texi tree-ssa.texi	\
 	 loop.texi generic.texi gimple.texi plugins.texi optinfo.texi   \
-	 match-and-simplify.texi analyzer.texi ux.texi poly-int.texi
+	 match-and-simplify.texi analyzer.texi ux.texi poly-int.texi	\
+	 params.texi
 
 TEXI_GCCINSTALL_FILES = install.texi fdl.texi		\
 	 gcc-common.texi gcc-vers.texi
@@ -3937,7 +3938,7 @@ regenerate-opt-urls-unit-test: $(OPT_URLS_HTML_DEPS)
 
 # Regenerate attr-urls.def from the generated html.
 .PHONY: regenerate-attr-urls
-ATTR_URLS_HTML_DEPS = $(build_htmldir)/gcc/Concept-and-Symbol-Index.html
+ATTR_URLS_HTML_DEPS = $(build_htmldir)/gcc/Attribute-Index.html
 
 regenerate-attr-urls: $(srcdir)/regenerate-attr-urls.py $(ATTR_URLS_HTML_DEPS)
 	$(srcdir)/regenerate-attr-urls.py $(build_htmldir) $(shell dirname $(srcdir))
@@ -4817,7 +4818,7 @@ paranoia: paranoia.o real.o $(LIBIBERTY)
 	g++ -o $@ paranoia.o real.o $(LIBIBERTY)
 
 all.fda: $(ALL_FDAS)
-	$(PROFILE_MERGER) $(ALL_FDAS) --output_file all.fda -gcov_version 2
+	$(PROFILE_MERGER) $(ALL_FDAS) --output_file all.fda -gcov_version 3
 
 # These exist for maintenance purposes.
 

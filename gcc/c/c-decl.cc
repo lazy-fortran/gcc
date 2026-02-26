@@ -5015,7 +5015,7 @@ c_make_fname_decl (location_t loc, tree id, int type_dep)
   DECL_ARTIFICIAL (decl) = 1;
 
   init = build_string (length + 1, name);
-  free (CONST_CAST (char *, name));
+  free (const_cast<char *> (name));
   TREE_TYPE (init) = type;
   DECL_INITIAL (decl) = init;
 
@@ -6541,6 +6541,7 @@ build_compound_literal (location_t loc, tree type, tree init, bool non_const,
 
       type = TREE_TYPE (decl);
       TREE_TYPE (DECL_INITIAL (decl)) = type;
+      relayout_decl (decl);
     }
 
   if (type == error_mark_node || !COMPLETE_TYPE_P (type))
@@ -13679,25 +13680,22 @@ c_write_global_declarations_1 (tree globals)
       if (TREE_CODE (decl) == FUNCTION_DECL
 	  && DECL_INITIAL (decl) == NULL_TREE
 	  && DECL_EXTERNAL (decl)
-	  && !TREE_PUBLIC (decl))
+	  && !TREE_PUBLIC (decl)
+	  && !warning_suppressed_p (decl, OPT_Wunused))
 	{
 	  if (C_DECL_USED (decl))
 	    {
-	      /* TODO: Add OPT_Wundefined-inline.  */
 	      if (pedwarn (input_location, 0, "%q+F used but never defined",
 			   decl))
-		suppress_warning (decl /* OPT_Wundefined-inline.  */);
+		suppress_warning (decl, OPT_Wunused);
 	    }
 	  /* For -Wunused-function warn about unused static prototypes.  */
 	  else if (warn_unused_function
 		   && ! DECL_ARTIFICIAL (decl)
-		   && ! warning_suppressed_p (decl, OPT_Wunused_function))
-	    {
-	      if (warning (OPT_Wunused_function,
-			   "%q+F declared %<static%> but never defined",
-			   decl))
-		suppress_warning (decl, OPT_Wunused_function);
-	    }
+		   && warning (OPT_Wunused_function,
+			       "%q+F declared %<static%> but never defined",
+			       decl))
+	    suppress_warning (decl, OPT_Wunused);
 	}
 
       wrapup_global_declaration_1 (decl);

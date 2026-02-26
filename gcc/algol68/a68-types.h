@@ -151,7 +151,8 @@ typedef struct LOW_CTX_T LOW_CTX_T;
 /* Type of the lowerer routines defined in a68-low-prelude.cc.  */
 typedef tree (*LOWERER_T) (struct NODE_T *, struct LOW_CTX_T);
 
-#define NO_LOWERER a68_lower_unimplemented
+#define NO_LOWERER NULL
+#define LOWERER_UNIMPL a68_lower_unimplemented
 
 struct GTY((chain_next ("%h.more"), chain_prev ("%h.less"))) KEYWORD_T
 {
@@ -596,6 +597,11 @@ struct GTY(()) TABLE_T
    are optimized in a similar way than variable declarations in order to avoid
    indirect addressing.
 
+   NEST_PROC is set when the defining identifier has been set in an
+   identity-declaration of a proc mode with a formal hole as actual parameter.
+   These declarations are optimized in a similar way than variable declarations
+   in order to avoid indirect addressing.
+
    YOUNGEST_ENVIRON is used when NODE is either a ROUTINE_TEXT or a
    FORMAT_TEXT, and contains the youngest (higher) lexical level of any object
    directly declared in the routine or format body.  This is filled in and used
@@ -620,7 +626,7 @@ struct GTY((chain_next ("%h.next"))) TAG_T
   MOID_T *type;
   NODE_T *node, *unit;
   const char *value;
-  bool scope_assigned, use, in_proc, loc_assigned, portable, variable;
+  bool scope_assigned, use, in_proc, nest_proc, loc_assigned, portable, variable;
   bool ascribed_routine_text, is_recursive, publicized;
   int priority, heap, scope, youngest_environ, number;
   STATUS_MASK_T status;
@@ -1013,6 +1019,7 @@ struct GTY(()) A68_T
 #define MULTIPLE_MODE(p) ((p)->multiple_mode)
 #define NAME(p) ((p)->name)
 #define NEST(p) ((p)->nest)
+#define NEST_PROC(p) ((p)->nest_proc)
 #define NEXT(p) ((p)->next)
 #define NEXT_NEXT(p) (NEXT (NEXT (p)))
 #define NEXT_NEXT_NEXT(p) (NEXT (NEXT_NEXT (p)))

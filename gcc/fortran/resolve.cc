@@ -6080,9 +6080,7 @@ gfc_resolve_ref (gfc_expr *expr)
   n_components = 0;
   array_ref = NULL;
 
-  if (expr->expr_type == EXPR_VARIABLE
-      && expr->symtree->n.sym->ts.type == BT_DERIVED
-      && expr->symtree->n.sym->ts.u.derived->attr.pdt_type)
+  if (expr->expr_type == EXPR_VARIABLE && IS_PDT (expr))
     last_pdt = expr->symtree->n.sym->ts.u.derived;
 
   for (ref = expr->ref; ref; ref = ref->next)
@@ -12435,33 +12433,57 @@ gfc_resolve_forall_body (gfc_code *code, int nvar, gfc_expr **var_expr)
    nested forall constructs. This is used to allocate the needed memory
    in gfc_resolve_forall.  */
 
+static int gfc_count_forall_iterators (gfc_code *code);
+
+/* Return the deepest nested FORALL/DO CONCURRENT iterator count in CODE's
+   next-chain, descending into block arms such as IF/ELSE branches.  */
+
+static int
+gfc_max_forall_iterators_in_chain (gfc_code *code)
+{
+  int max_iters = 0;
+
+  for (gfc_code *c = code; c; c = c->next)
+    {
+      int sub_iters = 0;
+
+      if (c->op == EXEC_FORALL || c->op == EXEC_DO_CONCURRENT)
+	sub_iters = gfc_count_forall_iterators (c);
+      else if (c->op == EXEC_BLOCK)
+	{
+	  /* BLOCK/ASSOCIATE bodies live in the block namespace code chain,
+	     not in the generic c->block arm list used by IF/SELECT.  */
+	  if (c->ext.block.ns && c->ext.block.ns->code)
+	    sub_iters = gfc_max_forall_iterators_in_chain (c->ext.block.ns->code);
+	}
+      else if (c->block)
+	for (gfc_code *b = c->block; b; b = b->block)
+	  {
+	    int arm_iters = gfc_max_forall_iterators_in_chain (b->next);
+	    if (arm_iters > sub_iters)
+	      sub_iters = arm_iters;
+	  }
+
+      if (sub_iters > max_iters)
+	max_iters = sub_iters;
+    }
+
+  return max_iters;
+}
+
+
 static int
 gfc_count_forall_iterators (gfc_code *code)
 {
-  int max_iters, sub_iters, current_iters;
+  int current_iters = 0;
   gfc_forall_iterator *fa;
 
   gcc_assert (code->op == EXEC_FORALL || code->op == EXEC_DO_CONCURRENT);
-  max_iters = 0;
-  current_iters = 0;
 
   for (fa = code->ext.concur.forall_iterator; fa; fa = fa->next)
-    current_iters ++;
+    current_iters++;
 
-  code = code->block->next;
-
-  while (code)
-    {
-      if (code->op == EXEC_FORALL || code->op == EXEC_DO_CONCURRENT)
-        {
-          sub_iters = gfc_count_forall_iterators (code);
-          if (sub_iters > max_iters)
-            max_iters = sub_iters;
-        }
-      code = code->next;
-    }
-
-  return current_iters + max_iters;
+  return current_iters + gfc_max_forall_iterators_in_chain (code->block->next);
 }
 
 
@@ -14918,8 +14940,7 @@ build_init_assign (gfc_symbol *sym, gfc_expr *init)
   gfc_code *init_st;
   gfc_namespace *ns = sym->ns;
 
-  if (sym->attr.function && sym->result == sym
-      && sym->ts.type == BT_DERIVED && sym->ts.u.derived->attr.pdt_type)
+  if (sym->attr.function && sym->result == sym && IS_PDT (sym))
     {
       gfc_free_expr (init);
       return;
@@ -16687,9 +16708,10 @@ resolve_typebound_procedure (gfc_symtree* stree)
 	  goto error;
 	}
 
-      if (resolve_bindings_derived->attr.pdt_template
-	  && gfc_pdt_is_instance_of (resolve_bindings_derived,
-				     CLASS_DATA (me_arg)->ts.u.derived)
+      if (((resolve_bindings_derived->attr.pdt_template
+	    && gfc_pdt_is_instance_of (resolve_bindings_derived,
+				       CLASS_DATA (me_arg)->ts.u.derived))
+	   || resolve_bindings_derived->attr.pdt_type)
           && (me_arg->param_list != NULL)
           && (gfc_spec_list_type (me_arg->param_list,
 				  CLASS_DATA(me_arg)->ts.u.derived)
@@ -17061,8 +17083,7 @@ resolve_component (gfc_component *c, gfc_symbol *sym)
       if (!sym->attr.pdt_type)
 	sym->attr.pdt_comp = 1;
     }
-  else if (c->ts.type == BT_DERIVED && c->ts.u.derived->attr.pdt_type
-	   && !sym->attr.pdt_type)
+  else if (IS_PDT (c) && !sym->attr.pdt_type)
     sym->attr.pdt_comp = 1;
 
   if (c->attr.proc_pointer && c->ts.interface)

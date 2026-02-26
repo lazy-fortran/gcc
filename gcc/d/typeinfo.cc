@@ -467,7 +467,7 @@ class TypeInfoVisitor : public Visitor
 
 	/* Fill in the vtbl[].  */
 	if (!cd->isInterfaceDeclaration ())
-	  b->fillVtbl (cd, &b->vtbl, 1);
+	  dmd::fillVtbl (b, cd, &b->vtbl, 1);
 
 	/* ClassInfo for the interface.  */
 	value = build_address (get_classinfo_decl (id));
@@ -517,7 +517,7 @@ class TypeInfoVisitor : public Visitor
       return;
 
     /* Fill bvtbl with the functions we want to put out.  */
-    if (cd != bcd && !bs->fillVtbl (cd, &bvtbl, 0))
+    if (cd != bcd && !dmd::fillVtbl (bs, cd, &bvtbl, 0))
       return;
 
     /* First entry is struct Interface reference.  */
@@ -722,7 +722,7 @@ public:
     this->layout_field (build_typeinfo (d->loc, ti->next));
 
     /* Static array length.  */
-    this->layout_field (size_int (ti->dim->toInteger ()));
+    this->layout_field (size_int (dmd::toInteger (ti->dim)));
   }
 
   /* Layout of TypeInfo_AssociativeArray is:
@@ -730,7 +730,9 @@ public:
 	void *__monitor;
 	TypeInfo value;
 	TypeInfo key;
-	TypeInfo entry;  */
+	TypeInfo entry;
+	bool function(in void*, in void*) xopEquals;
+	hash_t function(in void*) xtoHash;  */
 
   void visit (TypeInfoAssociativeArrayDeclaration *d) final override
   {
@@ -750,6 +752,16 @@ public:
       this->layout_field (build_typeinfo (d->loc, d->entry));
     else
       this->layout_field (null_pointer_node);
+
+    /* bool function(in void*, in void*) xopEquals;  */
+    tree xeq = (d->xopEqual) ? build_address (get_symbol_decl (d->xopEqual))
+      : null_pointer_node;
+    this->layout_field (xeq);
+
+    /* hash_t function (in void*) xtoHash;  */
+    tree xhash = (d->xtoHash) ? build_address (get_symbol_decl (d->xtoHash))
+      : null_pointer_node;
+    this->layout_field (xhash);
   }
 
   /* Layout of TypeInfo_Vector is:
@@ -1081,6 +1093,9 @@ public:
     if (!sd->members)
       return;
 
+    if (sd->semanticRun () < PASS::semantic3done)
+      dmd::semanticTypeInfoMembers (sd);
+
     /* Mangled name of the struct declaration.  */
     this->layout_string (ti->deco);
 
@@ -1130,7 +1145,7 @@ public:
       this->layout_field (null_pointer_node);
 
     /* uint m_align;  */
-    this->layout_field (build_integer_cst (ti->alignsize (), d_uint_type));
+    this->layout_field (build_integer_cst (dmd::alignsize (ti), d_uint_type));
 
     /* immutable(void)* xgetRTInfo;  */
     if (sd->getRTInfo)
@@ -1225,7 +1240,7 @@ base_vtable_offset (ClassDeclaration *cd, BaseClass *bc)
       for (size_t k = 0; k < cd2->vtblInterfaces->length; k++)
 	{
 	  BaseClass *bs = (*cd2->vtblInterfaces)[k];
-	  if (bs->fillVtbl (cd, NULL, 0))
+	  if (dmd::fillVtbl (bs, cd, NULL, 0))
 	    {
 	      if (bc == bs)
 		return csymoffset;
@@ -1442,6 +1457,15 @@ check_typeinfo_type (const Loc &loc, Scope *sc, Expression *expr)
 	    error_at (make_location_t (loc),
 		      "%<object.TypeInfo%> cannot be used with %<-fno-rtti%>");
 
+	  if (expr != NULL || !warned)
+	    {
+	      /* Print the location of where the error came from.  */
+	      if (sc && sc->tinst)
+		dmd::printInstantiationTrace (sc->tinst);
+
+	      global.errors++;
+	    }
+
 	  warned = 1;
 	}
     }
@@ -1653,6 +1677,7 @@ create_typeinfo (Type *type, Scope *sc)
 	    {
 	      ident = Identifier::idPool ("TypeInfo_AssociativeArray");
 	      make_internal_typeinfo (tk, ident, ptr_type_node, ptr_type_node,
+				      ptr_type_node, ptr_type_node,
 				      ptr_type_node, NULL);
 	    }
 	  t->vtinfo = sc && have_typeinfo_p (Type::typeinfoassociativearray)

@@ -459,7 +459,20 @@ Expression optimize(Expression e, int result, bool keepLvalue = false)
         {
             if (!ve.var.isReference() && !ve.var.isImportedSymbol())
             {
-                ret = new SymOffExp(e.loc, ve.var, 0, ve.hasOverloads);
+                bool hasOverloads = ve.hasOverloads;
+                if (auto v = ve.var.isVarDeclaration())
+                {
+                    if (v.needThis())
+                    {
+                        auto t = v.isThis();
+                        assert(t);
+                        .error(e.loc, "taking the address of non-static variable `%s` requires an instance of `%s`", v.toChars(), t.toChars());
+                        ret = ErrorExp.get();
+                        return;
+                    }
+                    hasOverloads = false;
+                }
+                ret = new SymOffExp(e.loc, ve.var, 0, hasOverloads);
                 ret.type = e.type;
                 return;
             }
@@ -1138,9 +1151,16 @@ Expression optimize(Expression e, int result, bool keepLvalue = false)
 
     void visitEqual(EqualExp e)
     {
-        //printf("EqualExp::optimize(result = %x) %s\n", result, e.toChars());
+        //printf("EqualExp::optimize(result = %d) %s\n", result, e.toChars());
+        if (auto lowering = e.lowering)
+        {
+            optimize(lowering, result, keepLvalue);
+            return;
+        }
+
         if (binOptimize(e, WANTvalue))
             return;
+
         Expression e1 = fromConstInitializer(result, e.e1);
         Expression e2 = fromConstInitializer(result, e.e2);
         if (e1.op == EXP.error)

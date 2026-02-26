@@ -489,16 +489,25 @@ int lra_curr_reload_num;
 
 static void remove_insn_scratches (rtx_insn *insn);
 
-/* Emit x := y, processing special case when y = u + v or y = u + v *
-   scale + w through emit_add (Y can be an address which is base +
-   index reg * scale + displacement in general case).  X may be used
-   as intermediate result therefore it should be not in Y.  */
+/* Emit x := y, processing special case when y = u + v or y = u + v * scale + w
+   through emit_add (Y can be an address which is base + index reg * scale +
+   displacement in general case).  X may be used as intermediate result
+   therefore it should be not in Y.  Set up pointer flag of X if Y is
+   equivalence whose original target has setup pointer flag.  */
 void
 lra_emit_move (rtx x, rtx y)
 {
   int old;
   rtx_insn *insn;
 
+  if ((REG_P (x) || MEM_P (x)) && lra_pointer_equiv_set_in (y))
+     {
+       /* Set up pointer flag from original equivalence target: */
+       if (REG_P (x))
+	 REG_POINTER (x) = 1;
+       else
+	 MEM_POINTER (x) = 1;
+     }
   if (GET_CODE (y) != PLUS)
     {
       if (rtx_equal_p (x, y))
@@ -1911,12 +1920,12 @@ lra_dump_insns_if_possible (const char *title)
   lra_dump_insns (lra_dump_file);
 }
 
-/* Emit insns BEFORE before INSN and insns AFTER after INSN.  Put the
-   insns onto the stack.  Print about emitting the insns with
-   TITLE.  */
+/* Emit insns BEFORE before INSN and insns AFTER after INSN.  Put the insns
+   onto the stack.  Print about emitting the insns with TITLE.  Move insn
+   REG_ARGS_SIZE note to AFTER insns if FIXUP_REG_ARGS_SIZE.  */
 void
 lra_process_new_insns (rtx_insn *insn, rtx_insn *before, rtx_insn *after,
-		       const char *title)
+		       const char *title, bool fixup_reg_args_size)
 {
   if (before == NULL_RTX && after == NULL_RTX)
     return;
@@ -1974,6 +1983,25 @@ lra_process_new_insns (rtx_insn *insn, rtx_insn *before, rtx_insn *after,
 	  emit_insn_after (after, insn);
 	  push_insns (last, insn);
 	  setup_sp_offset (after, last);
+	  if (fixup_reg_args_size)
+	    {
+	      rtx note = find_reg_note (insn, REG_ARGS_SIZE, NULL_RTX);
+	      if (note)
+		{
+		  remove_note (insn, note);
+		  fixup_args_size_notes (insn, last,
+					 get_args_size (note));
+		  if (lra_dump_file != NULL)
+		    {
+		      fprintf (lra_dump_file,
+			       "    fixing up REG_SIZE_NOTE for:\n");
+		      dump_rtl_slim (lra_dump_file, insn, insn, -1, 0);
+		      fprintf (lra_dump_file, "    fixed insns after:\n");
+		      dump_rtl_slim (lra_dump_file,
+				     NEXT_INSN (insn), last, -1, 0);
+		    }
+		}
+	    }
 	}
       else
 	{
@@ -2608,6 +2636,7 @@ lra (FILE *f, int verbose)
   sbitmap_free (lra_constraint_insn_stack_bitmap);
   lra_constraint_insn_stack.release ();
   finish_insn_recog_data ();
+  lra_finish_equiv ();
   regstat_free_n_sets_and_refs ();
   regstat_free_ri ();
   reload_completed = 1;

@@ -622,11 +622,12 @@ cp_fold_convert (tree type, tree expr)
   tree conv;
   if (TREE_TYPE (expr) == type)
     conv = expr;
-  else if (TREE_CODE (expr) == PTRMEM_CST
-	   && same_type_p (TYPE_PTRMEM_CLASS_TYPE (type),
-			   PTRMEM_CST_CLASS (expr)))
+  else if ((TREE_CODE (expr) == PTRMEM_CST
+	    && same_type_p (TYPE_PTRMEM_CLASS_TYPE (type),
+			    PTRMEM_CST_CLASS (expr)))
+	    || (REFLECT_EXPR_P (expr) && REFLECTION_TYPE_P (type)))
     {
-      /* Avoid wrapping a PTRMEM_CST in NOP_EXPR.  */
+      /* Avoid wrapping a PTRMEM_CST/REFLECT_EXPR in NOP_EXPR.  */
       conv = copy_node (expr);
       TREE_TYPE (conv) = type;
     }
@@ -1209,7 +1210,7 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
 
   /* Explicitly evaluate void-converted concept checks since their
      satisfaction may produce ill-formed programs.  */
-   if (concept_check_p (expr))
+   if (concept_check_p (expr) && !cp_unevaluated_operand)
      expr = evaluate_concept_check (expr);
 
   /* Detect using expressions of consteval-only types outside manifestly

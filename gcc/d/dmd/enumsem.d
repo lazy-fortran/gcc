@@ -240,7 +240,9 @@ void enumSemantic(Scope* sc, EnumDeclaration ed)
             em.dsymbolSemantic(em._scope);
     });
 
-    if (global.params.useTypeInfo && Type.dtypeinfo && !ed.inNonRoot())
+    if (ed.errors)
+        ed.memtype = Type.terror; // avoid infinite recursion in toBaseType
+    else if (global.params.useTypeInfo && Type.dtypeinfo && !ed.inNonRoot())
         semanticTypeInfo(sc, ed.memtype);
     //printf("ed.defaultval = %lld\n", ed.defaultval);
 
@@ -486,21 +488,30 @@ void enumMemberSemantic(Scope* sc, EnumMember em)
     else if (first)
     {
         Type t;
+        bool terror;
         if (em.ed.memtype)
+        {
             t = em.ed.memtype;
+            if (!t.isScalar())
+            {
+                t = Type.terror; // print more relevant error message later
+                terror = true;
+            }
+        }
         else
         {
             t = Type.tint32;
             if (!em.ed.isAnonymous())
                 em.ed.memtype = t;
         }
+
         const errors = global.startGagging();
         Expression e = new IntegerExp(em.loc, 0, t);
         e = e.ctfeInterpret();
-        if (global.endGagging(errors))
+        if (global.endGagging(errors) || terror)
         {
             error(em.loc, "cannot generate 0 value of type `%s` for `%s`",
-                t.toChars(), em.toChars());
+                em.ed.memtype.toChars(), em.toChars());
         }
         // save origValue for better json output
         em.origValue = e;

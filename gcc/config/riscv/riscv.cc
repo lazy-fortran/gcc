@@ -3912,9 +3912,16 @@ riscv_legitimize_move (machine_mode mode, rtx dest, rtx src)
 		}
 	    }
 
+	  /* If we are extracting a single element out of a vector and do
+	     not need an intermediate register, then the extraction will
+	     occur directly into RESULT.  RESULT is the same as DEST and
+	     INT_REG.  So we end up with a nop move.  That is not a major
+	     problem, except in this case it'll send us right back into
+	     this code and we recurse.  Given we put the value in RESULT
+	     already we can just elide the nop move here and be done.  */
 	  if (need_int_reg_p)
 	    emit_move_insn (dest, gen_lowpart (GET_MODE (dest), int_reg));
-	  else
+	  else if (!rtx_equal_p (dest, int_reg)) 
 	    emit_move_insn (dest, int_reg);
 	  return true;
 	}
@@ -4627,6 +4634,16 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
 	      || GET_CODE (XEXP (x, 0)) == ASHIFT))
 	{
 	  *total = COSTS_N_INSNS (1);
+	  return true;
+	}
+
+      /* Conditional AND */
+      if (TARGET_ZICOND
+	  && GET_CODE (XEXP (x, 0)) == IF_THEN_ELSE
+	  && GET_CODE (XEXP (x, 1)) == IF_THEN_ELSE
+	  && GET_CODE (XEXP (XEXP (x, 1), 1)) == AND)
+	{
+	  *total = COSTS_N_INSNS (3);
 	  return true;
 	}
 
@@ -10718,9 +10735,9 @@ riscv_register_move_cost (machine_mode mode,
   if (from == V_REGS)
     {
       if (to_is_gpr)
-	return get_vector_costs ()->regmove->VR2GR;
+	return get_vr2gr_cost ();
       else if (to_is_fpr)
-	return get_vector_costs ()->regmove->VR2FR;
+	return get_vr2fr_cost ();
     }
 
   if (to == V_REGS)
@@ -14203,6 +14220,21 @@ get_gr2vr_cost ()
   return cost;
 }
 
+/* Return the cost of operation that move from vr to gpr.
+   It will take the value of --param=vr2gpr_cost if it is provided.
+   Or the default regmove->VR2GR will be returned.  */
+
+int
+get_vr2gr_cost ()
+{
+  int cost = get_vector_costs ()->regmove->VR2GR;
+
+  if (vr2gpr_cost != VR2GPR_COST_UNPROVIDED)
+    cost = vr2gpr_cost;
+
+  return cost;
+}
+
 /* Return the cost of moving data from floating-point to vector register.
    It will take the value of --param=fpr2vr-cost if it is provided.
    Otherwise the default regmove->FR2VR will be returned.  */
@@ -14214,6 +14246,21 @@ get_fr2vr_cost ()
 
   if (fpr2vr_cost != FPR2VR_COST_UNPROVIDED)
     cost = fpr2vr_cost;
+
+  return cost;
+}
+
+/* Return the cost of moving data from floating-point to vector register.
+   It will take the value of --param=fpr2vr-cost if it is provided.
+   Otherwise the default regmove->FR2VR will be returned.  */
+
+int
+get_vr2fr_cost ()
+{
+  int cost = get_vector_costs ()->regmove->VR2FR;
+
+  if (vr2fpr_cost != VR2FPR_COST_UNPROVIDED)
+    cost = vr2fpr_cost;
 
   return cost;
 }
@@ -14361,8 +14408,6 @@ extract_base_offset_in_addr (rtx mem, rtx *base, rtx *offset)
 static bool
 riscv_vector_mode_supported_any_target_p (machine_mode)
 {
-  if (TARGET_XTHEADVECTOR)
-    return false;
   return true;
 }
 
@@ -14963,8 +15008,8 @@ riscv_same_function_versions (string_slice v1, const_tree, string_slice v2,
 
   /* Invalid features should have already been rejected by this point so
      providing no location should be okay.  */
-  parse_features_for_version (v1, UNKNOWN_LOCATION, mask1, prio1);
-  parse_features_for_version (v2, UNKNOWN_LOCATION, mask2, prio2);
+  parse_features_for_version (v1, nullptr, mask1, prio1);
+  parse_features_for_version (v2, nullptr, mask2, prio2);
 
   return compare_fmv_features (mask1, mask2, prio1, prio2) == 0;
 }

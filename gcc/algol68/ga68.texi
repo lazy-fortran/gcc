@@ -1305,6 +1305,17 @@ As C @code{unsigned long long} or as C @code{unsigned long} or as C @code{unsign
 As C @code{float}
 @item @code{@B{long} @B{real}}
 As C @code{double}
+@item @code{string} but only as formal parameters of procedures
+Each Algol 68 string formal parameter turns into three parameters in C:
+
+@table @code
+@item uint32_t *s
+A pointer to the UCS-4 characters composing the string.
+@item size_t len
+The length of @code{s} in number of characters.
+@item size_t stride
+The distance in bytes between each character in @code{s}.
+@end table
 @item @B{proc} with accepted formal parameter modes and yielded mode
 As the corresponding C functions.
 @item Structs with fields of accepted modes
@@ -2799,16 +2810,22 @@ in the elements of the given bits operands.
 
 @deftypefn Operator {} {@B{SHL}} {= (@B{l} @B{bits} a, @B{int} n) @B{l} @B{bits}}
 @deftypefnx Operator {} {@B{UP}} {= (@B{l} @B{bits} a, @B{int} n) @B{l} @B{bits}}
-Dyadic operator that yields the given bits operand shifted @code{n}
-positions to the left.  Extra elements introduced on the right are
-initialized to @code{@B{false}}.
+Dyadic operator that yields the given bits operand shifted @code{ABS
+n} positions to the left if @code{n >= 0} or @code{ABS n} positions to
+the right if @code{n < 0}.  Extra elements introduced on the right or
+left are initialized to @code{@B{false}}.  If @code{ABS n >
+L_bits_width} then the resulting bits value has all bits set to
+@code{false}.
 @end deftypefn
 
 @deftypefn Operator {} {@B{SHR}} {= (@B{l} @B{bits} a, @B{int} n) @B{l} @B{bits}}
 @deftypefnx Operator {} {@B{DOWN}} {= (@B{l} @B{bits} a, @B{int} n) @B{l} @B{bits}}
-Dyadic operator that yields the given bits operand shifted @code{n}
-positions to the right.  Extra elements introduced on the left are
-initialized to @code{@B{false}}.
+Dyadic operator that yields the given bits operand shifted @code{ABS
+n} positions to the right if @code{n >= 0} or @code{ABS n} positions
+to the left if @code{n < 0}.  Extra elements introduced on the right
+or left are initialized to @code{@B{false}}.  If @code{ABS n >
+L_bits_width} then the resulting bits value has all bits set to
+@code{false}.
 @end deftypefn
 
 @subsection Relational
@@ -3035,6 +3052,25 @@ boolean arguments.
 @deftypefn Operator {} {@B{xor}} {= (@B{l} @B{bits} a, b) @B{l} @B{bits}}
 Dyadic operator that yields the bit exclusive-or operation of the
 given bits arguments.
+@end deftypefn
+
+@deftypefn Operator {} {@B{set}} {= (@B{l} @B{bits} b, @B{int} n) @B{l} @B{bits}}
+Dyadic operator that sets the @code{n}th least significant bit in
+@code{@B{b}}, where @code{n} is zero based.  If @code{n} is not in the
+range @code{[0,L_bits_width)} then the operator yields @B{b}.
+@end deftypefn
+
+@deftypefn Operator {} {@B{clear}} {= (@B{l} @B{bits} b, @B{int} n) @B{l} @B{bits}}
+Dyadic operator that clears the @code{n}th least significant bit in
+@code{@B{b}}, where @code{n} is zero based.  If @code{n} is not in the
+range @code{[0,L_bits_width)} then the operator yields @B{b}.
+@end deftypefn
+
+@deftypefn Operator {} {@B{test}} {= (@B{l} @B{bits} b, @B{int} n) @B{bool}}
+Dyadic operator that tests whether the @code{n}th least significant
+bit in @code{@B{b}} is set, where @code{n} is zero based. If @code{n}
+is not in the range @code{0,L_bits_width)} then the operator yields
+@B{false}.
 @end deftypefn
 
 @node Extended math procedures

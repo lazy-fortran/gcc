@@ -490,6 +490,7 @@ enum gfc_isym_id
   GFC_ISYM_COS,
   GFC_ISYM_COSD,
   GFC_ISYM_COSH,
+  GFC_ISYM_COSHAPE,
   GFC_ISYM_COTAN,
   GFC_ISYM_COTAND,
   GFC_ISYM_COUNT,
@@ -3571,7 +3572,12 @@ vec_push (char **&optr, size_t &osz, const char *elt)
   /* {auto,}vec.safe_push () replacement.  Don't ask..  */
   // if (strlen (elt) < 4) return; premature optimization: eliminated by cutoff
   optr = XRESIZEVEC (char *, optr, osz + 2);
-  optr[osz] = CONST_CAST (char *, elt);
+  optr[osz] =
+#ifdef __cplusplus
+    const_cast<char *> (elt);
+#else
+    (__extension__ (union {const char *_q; const char *_nq;})(elt))._nq;
+#endif
   optr[++osz] = NULL;
 }
 
@@ -4304,6 +4310,17 @@ bool gfc_may_be_finalized (gfc_typespec);
 	(expr && expr->expr_type == EXPR_VARIABLE \
 	 && expr->symtree->n.sym->assoc \
 	 && expr->symtree->n.sym->assoc->inferred_type)
+#define PDT_PREFIX "PDT"
+#define PDT_PREFIX_LEN 3
+#define IS_PDT(sym) \
+	(sym != NULL && sym->ts.type == BT_DERIVED \
+	 && sym->ts.u.derived \
+	 && sym->ts.u.derived->attr.pdt_type)
+#define IS_CLASS_PDT(sym) \
+	(sym != NULL && sym->ts.type == BT_CLASS \
+	 && CLASS_DATA (sym) \
+	 && CLASS_DATA (sym)->ts.u.derived \
+	 && CLASS_DATA (sym)->ts.u.derived->attr.pdt_type)
 
 /* frontend-passes.cc */
 

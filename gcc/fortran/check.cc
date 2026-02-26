@@ -832,6 +832,9 @@ array_check (gfc_expr *e, int n)
   if (e->rank != 0 && e->ts.type != BT_PROCEDURE)
     return true;
 
+  if (gfc_is_class_array_function (e))
+    return true;
+
   gfc_error ("%qs argument of %qs intrinsic at %L must be an array",
 	     gfc_current_intrinsic_arg[n]->name, gfc_current_intrinsic,
 	     &e->where);
@@ -2762,6 +2765,26 @@ gfc_check_complex (gfc_expr *x, gfc_expr *y)
   if (!int_or_real_check (y, 1))
     return false;
   if (!scalar_check (y, 1))
+    return false;
+
+  return true;
+}
+
+
+bool
+gfc_check_coshape (gfc_expr *coarray, gfc_expr *kind)
+{
+  if (flag_coarray == GFC_FCOARRAY_NONE)
+    {
+      gfc_fatal_error ("Coarrays disabled at %L, use %<-fcoarray=%> to enable",
+		       gfc_current_intrinsic_where);
+      return false;
+    }
+
+  if (!coarray_check (coarray, 0))
+    return false;
+
+  if (!kind_check (kind, 2, BT_INTEGER))
     return false;
 
   return true;
