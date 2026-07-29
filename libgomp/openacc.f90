@@ -176,7 +176,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_copyin_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_present_or_copyin_32_h (a, len)
@@ -194,7 +194,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_present_or_copyin_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_create_32_h (a, len)
@@ -212,7 +212,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_create_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_present_or_create_32_h (a, len)
@@ -230,7 +230,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_present_or_create_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_copyout_32_h (a, len)
@@ -248,7 +248,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_copyout_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_copyout_finalize_32_h (a, len)
@@ -266,7 +266,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_copyout_finalize_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_copyout_finalize_async_32_h (a, len, async)
@@ -289,7 +289,7 @@ module openacc_internal
 
     subroutine acc_copyout_finalize_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -308,7 +308,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_delete_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_delete_finalize_32_h (a, len)
@@ -326,7 +326,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_delete_finalize_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_update_device_32_h (a, len)
@@ -344,7 +344,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_update_device_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     subroutine acc_update_self_32_h (a, len)
@@ -362,7 +362,7 @@ module openacc_internal
     end subroutine
 
     subroutine acc_update_self_array_h (a)
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end subroutine
 
     function acc_is_present_32_h (a, len)
@@ -383,7 +383,7 @@ module openacc_internal
 
     function acc_is_present_array_h (a)
       logical acc_is_present_array_h
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
     end function
 
     subroutine acc_copyin_async_32_h (a, len, async)
@@ -406,7 +406,7 @@ module openacc_internal
 
     subroutine acc_copyin_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -430,7 +430,7 @@ module openacc_internal
 
     subroutine acc_create_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -454,7 +454,7 @@ module openacc_internal
 
     subroutine acc_copyout_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -478,7 +478,7 @@ module openacc_internal
 
     subroutine acc_delete_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -502,7 +502,7 @@ module openacc_internal
 
     subroutine acc_delete_finalize_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -526,7 +526,7 @@ module openacc_internal
 
     subroutine acc_update_device_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
 
@@ -550,7 +550,7 @@ module openacc_internal
 
     subroutine acc_update_self_async_array_h (a, async)
       use openacc_kinds, only: acc_handle_kind
-      type (*), dimension (..), contiguous :: a
+      type (*), dimension (..) :: a
       integer (acc_handle_kind) async
     end subroutine
   end interface
@@ -1394,7 +1394,7 @@ end subroutine
 
 subroutine acc_copyin_array_h (a)
   use openacc_internal, only: acc_copyin_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_copyin_l (a, sizeof (a))
 end subroutine
 
@@ -1418,7 +1418,7 @@ end subroutine
 
 subroutine acc_present_or_copyin_array_h (a)
   use openacc_internal, only: acc_present_or_copyin_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_present_or_copyin_l (a, sizeof (a))
 end subroutine
 
@@ -1442,7 +1442,7 @@ end subroutine
 
 subroutine acc_create_array_h (a)
   use openacc_internal, only: acc_create_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_create_l (a, sizeof (a))
 end subroutine
 
@@ -1466,7 +1466,7 @@ end subroutine
 
 subroutine acc_present_or_create_array_h (a)
   use openacc_internal, only: acc_present_or_create_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_present_or_create_l (a, sizeof (a))
 end subroutine
 
@@ -1490,7 +1490,7 @@ end subroutine
 
 subroutine acc_copyout_array_h (a)
   use openacc_internal, only: acc_copyout_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_copyout_l (a, sizeof (a))
 end subroutine
 
@@ -1514,7 +1514,7 @@ end subroutine
 
 subroutine acc_copyout_finalize_array_h (a)
   use openacc_internal, only: acc_copyout_finalize_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_copyout_finalize_l (a, sizeof (a))
 end subroutine
 
@@ -1546,7 +1546,7 @@ subroutine acc_copyout_finalize_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_copyout_finalize_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_copyout_finalize_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1572,7 +1572,7 @@ end subroutine
 
 subroutine acc_delete_array_h (a)
   use openacc_internal, only: acc_delete_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_delete_l (a, sizeof (a))
 end subroutine
 
@@ -1596,7 +1596,7 @@ end subroutine
 
 subroutine acc_delete_finalize_array_h (a)
   use openacc_internal, only: acc_delete_finalize_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_delete_finalize_l (a, sizeof (a))
 end subroutine
 
@@ -1620,7 +1620,7 @@ end subroutine
 
 subroutine acc_update_device_array_h (a)
   use openacc_internal, only: acc_update_device_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_update_device_l (a, sizeof (a))
 end subroutine
 
@@ -1644,7 +1644,7 @@ end subroutine
 
 subroutine acc_update_self_array_h (a)
   use openacc_internal, only: acc_update_self_l
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   call acc_update_self_l (a, sizeof (a))
 end subroutine
 
@@ -1671,7 +1671,7 @@ end function
 function acc_is_present_array_h (a)
   use openacc_internal, only: acc_is_present_l
   logical acc_is_present_array_h
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   acc_is_present_array_h = acc_is_present_l (a, sizeof (a)) /= 0
 end function
 
@@ -1701,7 +1701,7 @@ subroutine acc_copyin_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_copyin_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_copyin_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1732,7 +1732,7 @@ subroutine acc_create_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_create_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_create_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1763,7 +1763,7 @@ subroutine acc_copyout_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_copyout_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_copyout_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1794,7 +1794,7 @@ subroutine acc_delete_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_delete_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_delete_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1827,7 +1827,7 @@ subroutine acc_delete_finalize_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_delete_finalize_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_delete_finalize_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1858,7 +1858,7 @@ subroutine acc_update_device_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_update_device_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_update_device_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
@@ -1889,7 +1889,7 @@ subroutine acc_update_self_async_array_h (a, async)
   use iso_c_binding, only: c_int
   use openacc_internal, only: acc_update_self_async_l
   use openacc_kinds, only: acc_handle_kind
-  type (*), dimension (..), contiguous :: a
+  type (*), dimension (..) :: a
   integer (acc_handle_kind) async
   call acc_update_self_async_l (a, sizeof (a), int (async, kind = c_int))
 end subroutine
