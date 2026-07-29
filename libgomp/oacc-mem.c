@@ -1284,11 +1284,26 @@ goacc_enter_data_internal (struct gomp_device_descr *acc_dev, size_t mapnum,
 
 	  gomp_mutex_lock (&acc_dev->lock);
 
+	  /* A GOMP_MAP_TO_PSET group may contain pointer mappings that refer
+	     to the same descriptor key.  Exit data adjusts that key once, so
+	     count it once when entering data.  */
+	  splay_tree_key prev_key = NULL;
 	  for (size_t j = 0; j < tgt->list_count; j++)
 	    {
 	      n = tgt->list[j].key;
 	      if (n && !tgt->list[j].is_attach)
-		n->dynamic_refcount++;
+		{
+		  if ((kinds[i] & 0xff) == GOMP_MAP_TO_PSET
+		      && n == prev_key)
+		    {
+		      if (n->refcount != REFCOUNT_INFINITY
+			  && n->refcount != REFCOUNT_ACC_MAP_DATA)
+			n->refcount--;
+		    }
+		  else
+		    n->dynamic_refcount++;
+		  prev_key = n;
+		}
 	    }
 	}
 
