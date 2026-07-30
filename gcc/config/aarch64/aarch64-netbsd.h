@@ -40,8 +40,13 @@
   "%(netbsd_link_spec)"
 
 
+/* Outline-atomics require LSE detection via __getauxval which is
+   Linux-specific.  NetBSD does not build libgcc's t-lse, so the
+   out-of-line helpers are absent.  Disable by default; the user
+   can still override with -moutline-atomics.  */
 #ifndef CC1_SPEC
-# define CC1_SPEC AARCH64_ERRATA_COMPILE_SPEC
+# define CC1_SPEC \
+  "%{!moutline-atomics:-mno-outline-atomics} " AARCH64_ERRATA_COMPILE_SPEC
 #endif
 
 #ifndef CC1PLUS_SPEC
