@@ -1202,7 +1202,8 @@ get_elem_size (gfc_se *se, gfc_expr *expr, tree class_container)
    expression passed as argument in VAR.  */
 
 static void
-get_var_descr (gfc_se *se, gfc_expr *var, tree class_container)
+get_var_descr (gfc_se *se, gfc_expr *var, tree class_container,
+	       tree data_ref)
 {
   gfc_se tmp_se;
 
@@ -1210,7 +1211,9 @@ get_var_descr (gfc_se *se, gfc_expr *var, tree class_container)
 
   gfc_init_se (&tmp_se, NULL);
 
-  if (var->ts.type == BT_DERIVED)
+  if (data_ref)
+    tmp_se.expr = data_ref;
+  else if (var->ts.type == BT_DERIVED)
     {
       tmp_se.want_pointer = 1;
       if (var->rank)
@@ -1393,7 +1396,7 @@ gfc_add_comp_finalizer_call (stmtblock_t *block, tree decl, gfc_component *comp,
 
 bool
 gfc_add_finalizer_call (stmtblock_t *block, gfc_expr *expr2,
-			tree class_container)
+			tree class_container, tree data_ref)
 {
   tree tmp;
   gfc_ref *ref;
@@ -1459,7 +1462,7 @@ gfc_add_finalizer_call (stmtblock_t *block, gfc_expr *expr2,
 
   gfc_se desc_se;
   gfc_init_se (&desc_se, NULL);
-  get_var_descr (&desc_se, expr, class_container);
+  get_var_descr (&desc_se, expr, class_container, data_ref);
   gfc_add_block_to_block (&tmp_block, &desc_se.pre);
 
   tmp = build_call_expr_loc (input_location, final_se.expr, 3,
@@ -1533,6 +1536,7 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
   gfc_init_block (&final_block);
   gfc_expr *finalize_expr;
   bool class_array_ref;
+  tree data_ref = NULL_TREE;
 
   /* We have to exclude vtable procedures (_copy and _final especially), uses
      of gfc_trans_assignment_1 in initialization and allocation before trying
@@ -1566,12 +1570,27 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
   if (!gfc_may_be_finalized (sym->ts))
     return false;
 
+  if (expr1->rank == 0 && expr1->ts.type == BT_DERIVED)
+    {
+      if (TREE_SIDE_EFFECTS (lse->expr))
+	{
+	  ptr = gfc_build_addr_expr (NULL_TREE, lse->expr);
+	  ptr = gfc_evaluate_now (ptr, &lse->pre);
+	  lse->expr = build_fold_indirect_ref_loc (input_location, ptr);
+	}
+      data_ref = lse->expr;
+    }
+
   gfc_init_block (&final_block);
-  bool finalizable = gfc_add_finalizer_call (&final_block, finalize_expr);
+  bool finalizable = gfc_add_finalizer_call (&final_block, finalize_expr,
+					     NULL_TREE, data_ref);
   gfc_free_expr (finalize_expr);
 
   if (!finalizable)
     return false;
+
+  if (data_ref)
+    gfc_add_block_to_block (&lse->finalblock, &lse->pre);
 
   lhs_attr = gfc_expr_attr (expr1);
 
@@ -1588,19 +1607,26 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
 	}
       else
 	{
-	  gfc_init_se (&se, NULL);
-	  if (expr1->rank)
-	    {
-	      /* Avoid calling trans-array.cc(set_factored_descriptor_value) by
-		 not using gfc_conv_expr_descriptor.  */
-	      se.descriptor_only = 1;
-	      gfc_conv_expr (&se, expr1);
-	      ptr = gfc_conv_descriptor_data_get (se.expr);
-	    }
+	  if (data_ref)
+	    ptr = gfc_build_addr_expr (NULL_TREE, data_ref);
 	  else
 	    {
-	      gfc_conv_expr (&se, expr1);
-	      ptr = gfc_build_addr_expr (NULL_TREE, se.expr);
+	      gfc_init_se (&se, NULL);
+	      if (expr1->rank)
+		{
+		  /* Avoid calling
+		     trans-array.cc(set_factored_descriptor_value) by not
+		     using gfc_conv_expr_descriptor.  */
+		  se.descriptor_only = 1;
+		  gfc_conv_expr (&se, expr1);
+		  ptr = gfc_conv_descriptor_data_get (se.expr);
+		}
+	      else
+		{
+		  gfc_conv_expr (&se, expr1);
+		  ptr = gfc_build_addr_expr (NULL_TREE, se.expr);
+		}
+	      gfc_add_block_to_block (&lse->finalblock, &se.pre);
 	    }
 	}
 
