@@ -64,9 +64,6 @@ contains
     call f18 ()	  ! { dg-final { scan-tree-dump-times "f18 \\\(\\\);" 1 "gimple" } } */
   end subroutine
 
-#if defined(__i386__) || defined(__x86_64__)
-  __attribute__((target ("avx512f,avx512bw")))
-#endif
   subroutine test2 ()
     !$omp target
       call f04 () ! { dg-final { scan-tree-dump-times "f03 \\\(\\\);" 1 "gimple" { target { { i?86-*-* x86_64-*-* } && { ! ilp32 } } } } }

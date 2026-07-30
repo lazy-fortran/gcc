@@ -692,6 +692,14 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 /* Target CPU builtins.  */
 #define TARGET_CPU_CPP_BUILTINS() ix86_target_macros ()
 
+/* Language-neutral variant used by frontends that do not link the C-family
+   support code.  Shares the implementation of TARGET_CPU_CPP_BUILTINS minus
+   the C++-dialect-specific parts.  See config/i386/i386-cppbuiltin.{cc,h}.  */
+struct cpp_reader;
+extern void ix86_cpu_cpp_builtins (struct cpp_reader *, bool);
+#define TARGET_GENERIC_CPU_CPP_BUILTINS(PFILE) \
+  ix86_cpu_cpp_builtins ((PFILE), false)
+
 /* Target Pragmas.  */
 #define REGISTER_TARGET_PRAGMAS() ix86_register_pragmas ()
 

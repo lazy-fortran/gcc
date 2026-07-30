@@ -26,6 +26,10 @@ i386-c.o: $(srcdir)/config/i386/i386-c.cc
 	  $(COMPILE) $<
 	  $(POSTCOMPILE)
 
+i386-cppbuiltin.o: $(srcdir)/config/i386/i386-cppbuiltin.cc
+	  $(COMPILE) $<
+	  $(POSTCOMPILE)
+
 x86-tune-sched.o: $(srcdir)/config/i386/x86-tune-sched.cc
 	  $(COMPILE) $<
 	  $(POSTCOMPILE)

@@ -444,8 +444,9 @@ fido-*-*)
 i[34567]86-*-* | x86_64-*-*)
 	cpu_type=i386
 	default_md_generator_partitions=6:6:1
-	c_target_objs="i386-c.o"
-	cxx_target_objs="i386-c.o"
+	c_target_objs="i386-c.o i386-cppbuiltin.o"
+	cxx_target_objs="i386-c.o i386-cppbuiltin.o"
+	fortran_target_objs="i386-cppbuiltin.o"
 	d_target_objs="i386-d.o"
 	jit_target_objs="i386-jit.o"
 	extra_objs="x86-tune-sched.o x86-tune-sched-bd.o x86-tune-sched-atom.o x86-tune-sched-core.o i386-options.o i386-builtins.o i386-expand.o i386-features.o"
