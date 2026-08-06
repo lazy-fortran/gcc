@@ -122,7 +122,8 @@ static void caf_shmem_report_bad_pointer (void);
    be valid in this process, i.e. it is the PR125113 situation.  We longjmp
    back to that thread's accessor invocation site, which then reports the
    error.  Any other SIGSEGV (inside the region, unrelated to our guard, or
-   raised from another thread) is left to the default disposition.  */
+   raised from another thread) is re-dispatched to the previously installed
+   disposition rather than being swallowed.  */
 static void
 caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
 {
@@ -143,11 +144,15 @@ caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
 
   if (!is_bad_ptr)
     {
-      /* Not the PR125113 situation: re-raise with the default disposition so
-	 the fault surfaces normally (core dump, etc.).  The process is about
-	 to terminate, so there is no need to restore the guard here, and the
-	 mutex must not be touched from within a signal handler.  */
-      signal (sig, SIG_DFL);
+      /* Not the PR125113 situation: restore the previously installed
+	 disposition and re-raise so any user-installed handler, debugger or
+	 sanitizer gets the fault instead of being suppressed.  sigaction and
+	 raise are async-signal-safe, and re-dispatching the saved disposition
+	 (be it SIG_DFL, SIG_IGN or a user handler) preserves the behaviour
+	 that was in place before the guard was installed.  The guard's saved
+	 disposition is globally consistent because installation/restoration
+	 are serialized by the guard mutex.  */
+      sigaction (sig, &caf_shmem_prev_sigsegv, NULL);
       raise (sig);
       return;
     }
