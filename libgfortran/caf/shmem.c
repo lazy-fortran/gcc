@@ -84,16 +84,30 @@ struct accessor_hash_t
    statically obvious cases with -Wcoarray-ptr-target; this guard converts the
    resulting SIGSEGV into a clean caf_runtime_error for the remaining cases.
 
-   The guard is installed only around the accessor invocations below and is
-   restored immediately afterwards, so the user's own SIGSEGV handling is not
-   disturbed outside of that window.  Because it uses sigsetjmp/siglongjmp it
-   is also safe when the fault happens in the same (single) image thread that
-   runs the accessor.  */
-static sigjmp_buf caf_shmem_segv_jmp;
-static volatile sig_atomic_t caf_shmem_guard_active = 0;
-static void *caf_shmem_region_begin = NULL;
-static size_t caf_shmem_region_size = 0;
+   The guard is only available where POSIX sigaction (and siginfo_t) is
+   present, since we need to inspect the faulting address.  On other targets
+   the accessors simply run without the range check.
+
+   The guard state (the jump buffer, region bounds and "active" flag) is
+   per-thread so that concurrent images/threads each have their own jump
+   target, and a process-wide mutex serializes installation and restoration
+   of the shared SIGSEGV disposition.  The mutex is held for the whole
+   duration of the guarded accessor, so at most one thread has the handler
+   installed at any time and a thread can never restore or overwrite another
+   thread's signal handler.  The guard is installed only around the accessor
+   invocations below and is restored immediately afterwards, so the user's
+   own SIGSEGV handling is not disturbed outside of that window.  Because it
+   uses sigsetjmp/siglongjmp it is also safe when the fault happens in the
+   same (single image) thread that runs the accessor.  */
+
+#if defined(HAVE_SIGACTION) && defined(SA_SIGINFO)
+
+static __thread sigjmp_buf caf_shmem_segv_jmp;
+static __thread volatile sig_atomic_t caf_shmem_guard_active = 0;
+static __thread void *caf_shmem_region_begin = NULL;
+static __thread size_t caf_shmem_region_size = 0;
 static struct sigaction caf_shmem_prev_sigsegv;
+static caf_shmem_mutex caf_shmem_guard_mutex = CAF_SHMEM_MUTEX_INITIALIZER;
 
 /* Forward declarations (install/restore/report are defined below but are
    called from the handler and the guarded accessor wrapper).  */
@@ -101,12 +115,14 @@ static int caf_shmem_install_guard (void *begin, size_t size);
 static void caf_shmem_restore_guard (void);
 static void caf_shmem_report_bad_pointer (void);
 
-/* SIGSEGV handler used while an accessor runs.  If the faulting address lies
+/* SIGSEGV handler used while an accessor runs.  It only acts on the faulting
+   thread: the thread-local state identifies the accessor invocation (if any)
+   that is active on the thread that faulted.  If the faulting address lies
    outside the shared-memory region, the pointer that was dereferenced cannot
    be valid in this process, i.e. it is the PR125113 situation.  We longjmp
-   back to the accessor invocation site, which then reports the error.  Any
-   other SIGSEGV (inside the region, unrelated to our guard, or raised from
-   another thread) is left to the previously installed handler.  */
+   back to that thread's accessor invocation site, which then reports the
+   error.  Any other SIGSEGV (inside the region, unrelated to our guard, or
+   raised from another thread) is left to the default disposition.  */
 static void
 caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
 {
@@ -127,9 +143,10 @@ caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
 
   if (!is_bad_ptr)
     {
-      /* Not the PR125113 situation.  Restore the previous disposition and
-	 re-raise so the default kernel behaviour (core dump, etc.) applies.  */
-      caf_shmem_restore_guard ();
+      /* Not the PR125113 situation: re-raise with the default disposition so
+	 the fault surfaces normally (core dump, etc.).  The process is about
+	 to terminate, so there is no need to restore the guard here, and the
+	 mutex must not be touched from within a signal handler.  */
       signal (sig, SIG_DFL);
       raise (sig);
       return;
@@ -141,7 +158,7 @@ caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
 }
 
 /* Install the SIGSEGV guard covering [begin, begin+size).  Returns 0 on
-   success.  */
+   success.  The caller holds caf_shmem_guard_mutex.  */
 static int
 caf_shmem_install_guard (void *begin, size_t size)
 {
@@ -158,7 +175,8 @@ caf_shmem_install_guard (void *begin, size_t size)
   return 0;
 }
 
-/* Restore the previously installed SIGSEGV handler.  */
+/* Restore the previously installed SIGSEGV handler.  The caller holds
+   caf_shmem_guard_mutex.  */
 static void
 caf_shmem_restore_guard (void)
 {
@@ -199,17 +217,43 @@ caf_shmem_guarded_getter (getter_t getter, void *add_data,
     return 0;
   if (sigsetjmp (caf_shmem_segv_jmp, 1) != 0)
     {
+      /* The handler longjmp'd back here; restore the signal disposition and
+	 release the mutex this thread holds before reporting.  */
       caf_shmem_restore_guard ();
+      caf_shmem_mutex_unlock (&caf_shmem_guard_mutex);
       caf_shmem_report_bad_pointer ();
       return -1; /* caf_runtime_error exits, but keep analysis simple.  */
     }
+  caf_shmem_mutex_lock (&caf_shmem_guard_mutex);
   if (caf_shmem_install_guard (local->sm.glbl.base, local->sm.size) != 0)
-    return 0; /* Could not guard; run without the range check.  */
+    {
+      caf_shmem_mutex_unlock (&caf_shmem_guard_mutex);
+      return 0; /* Could not guard; run without the range check.  */
+    }
   getter (add_data, image_index, dst_ptr, free_buffer, src_ptr, cb_token,
 	  src_origins, opt_dst_charlen, opt_src_charlen);
   caf_shmem_restore_guard ();
+  caf_shmem_mutex_unlock (&caf_shmem_guard_mutex);
   return 0;
 }
+
+#else /* !(HAVE_SIGACTION && SA_SIGINFO): run accessors without the range
+	 check on targets without POSIX signal handling.  */
+static int
+caf_shmem_guarded_getter (getter_t getter, void *add_data,
+			  const int *image_index, void *dst_ptr,
+			  int32_t *free_buffer, void *src_ptr,
+			  caf_token_t cb_token, const size_t src_origins,
+			  size_t *opt_dst_charlen,
+			  const size_t *opt_src_charlen)
+{
+  if (!local || !local->sm.glbl.base)
+    return 0;
+  getter (add_data, image_index, dst_ptr, free_buffer, src_ptr, cb_token,
+	  src_origins, opt_dst_charlen, opt_src_charlen);
+  return 0;
+}
+#endif
 
 static struct accessor_hash_t *accessor_hash_table = NULL;
 static int aht_cap = 0;
