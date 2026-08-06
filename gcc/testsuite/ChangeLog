@@ -1,3 +1,8 @@
+2026-08-06  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
+	* gfortran.dg/coarray/ptr_comp_7.f08: New test.
+
 2026-07-28  Reshma Roy  <Reshma.Roy@amd.com>
 
 	* gcc.target/i386/pr126382.c: New test.

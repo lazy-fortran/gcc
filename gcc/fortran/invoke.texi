@@ -997,8 +997,9 @@ This currently includes @option{-Waliasing}, @option{-Wampersand},
 @option{-Wconversion}, @option{-Wsurprising}, @option{-Wc-binding-type},
 @option{-Wintrinsics-std}, @option{-Wtabs}, @option{-Wintrinsic-shadow},
 @option{-Wline-truncation}, @option{-Wtarget-lifetime},
-@option{-Winteger-division}, @option{-Wreal-q-constant}, @option{-Wunused},
-@option{-Wundefined-do-loop} and @option{-Wundefined-vars}.
+@option{-Wcoarray-ptr-target}, @option{-Winteger-division},
+@option{-Wreal-q-constant}, @option{-Wunused}, @option{-Wundefined-do-loop}
+and @option{-Wundefined-vars}.
 
 @opindex Waliasing
 @cindex aliasing
@@ -1341,6 +1342,17 @@ This option is implied by @option{-Wextra}.
 @item -Wtarget-lifetime
 Warn if the pointer in a pointer assignment might be longer than the its
 target. This option is implied by @option{-Wall}.
+
+@opindex Wcoarray-ptr-target
+@item -Wcoarray-ptr-target
+Warn if a @code{pointer} component of a coarray-derived-type object is
+associated with a non-coarray local target, such as an ordinary variable or
+allocatable.  The shared-memory coarray runtime evaluates coindexed
+accessors in the caller's process under the assumption that everything
+reachable from a coarray lives inside the shared-memory region; the target
+of such a pointer lives in the associating image's private heap instead, so
+reading it from another image is undefined behaviour and may crash.  This
+option is implied by @option{-Wall}.
 
 @opindex Wzerotrip
 @item -Wzerotrip

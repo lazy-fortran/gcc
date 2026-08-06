@@ -1,3 +1,12 @@
+2026-08-06  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
+	* caf/shmem.c: Guard coindexed read accessors with a SIGSEGV
+	range check.  If an accessor dereferences a pointer that does not
+	lie inside the shared-memory region (e.g. a data-pointer component
+	associated with a non-coarray local target), report a clean runtime
+	error instead of crashing.
+
 2026-07-26  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
 
 	* intrinsics/reduce.c (reduce): Fix the mask_present.

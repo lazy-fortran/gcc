@@ -38,6 +38,8 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include <assert.h>
 #include <errno.h>
 #include <unistd.h>
+#include <signal.h>
+#include <setjmp.h>
 
 /* Define GFC_CAF_CHECK to enable run-time checking.  */
 /* #define GFC_CAF_CHECK  1  */
@@ -67,6 +69,147 @@ struct accessor_hash_t
     receiver_t receiver;
   } u;
 };
+
+
+/* Runtime range-check guard for the shared-memory CAF runtime.
+
+   The shared-memory runtime evaluates coindexed read accessors directly in
+   the caller's process.  Everything reachable from a remote coarray slot is
+   expected to live inside the shared-memory region, which every image maps at
+   the same virtual address.  A data-pointer component of a coarray-derived
+   type that was associated with a non-coarray local target (an ordinary
+   variable or allocatable) instead points into the source image's private
+   heap, which is not mapped into the caller's process; dereferencing it then
+   faults (cf. PR fortran/125113).  The compiler already warns about the
+   statically obvious cases with -Wcoarray-ptr-target; this guard converts the
+   resulting SIGSEGV into a clean caf_runtime_error for the remaining cases.
+
+   The guard is installed only around the accessor invocations below and is
+   restored immediately afterwards, so the user's own SIGSEGV handling is not
+   disturbed outside of that window.  Because it uses sigsetjmp/siglongjmp it
+   is also safe when the fault happens in the same (single) image thread that
+   runs the accessor.  */
+static sigjmp_buf caf_shmem_segv_jmp;
+static volatile sig_atomic_t caf_shmem_guard_active = 0;
+static void *caf_shmem_region_begin = NULL;
+static size_t caf_shmem_region_size = 0;
+static struct sigaction caf_shmem_prev_sigsegv;
+
+/* Forward declarations (install/restore/report are defined below but are
+   called from the handler and the guarded accessor wrapper).  */
+static int caf_shmem_install_guard (void *begin, size_t size);
+static void caf_shmem_restore_guard (void);
+static void caf_shmem_report_bad_pointer (void);
+
+/* SIGSEGV handler used while an accessor runs.  If the faulting address lies
+   outside the shared-memory region, the pointer that was dereferenced cannot
+   be valid in this process, i.e. it is the PR125113 situation.  We longjmp
+   back to the accessor invocation site, which then reports the error.  Any
+   other SIGSEGV (inside the region, unrelated to our guard, or raised from
+   another thread) is left to the previously installed handler.  */
+static void
+caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
+{
+  (void) ucontext;
+  /* If the faulting address lies inside the shared-memory region, this is a
+     page fault on memory that every image should be able to access, so it is
+     not the PR125113 pointer-component problem: let the fault surface with
+     the default disposition.  */
+  bool is_bad_ptr = false;
+  if (sig == SIGSEGV && caf_shmem_guard_active)
+    {
+      void *addr = info->si_addr;
+      uintptr_t begin = (uintptr_t) caf_shmem_region_begin;
+      uintptr_t end = begin + caf_shmem_region_size;
+      if (!begin || (uintptr_t) addr < begin || (uintptr_t) addr >= end)
+	is_bad_ptr = true;
+    }
+
+  if (!is_bad_ptr)
+    {
+      /* Not the PR125113 situation.  Restore the previous disposition and
+	 re-raise so the default kernel behaviour (core dump, etc.) applies.  */
+      caf_shmem_restore_guard ();
+      signal (sig, SIG_DFL);
+      raise (sig);
+      return;
+    }
+
+  /* Intercept: convert the fault into a clean runtime error.  */
+  caf_shmem_guard_active = 0;
+  siglongjmp (caf_shmem_segv_jmp, 1);
+}
+
+/* Install the SIGSEGV guard covering [begin, begin+size).  Returns 0 on
+   success.  */
+static int
+caf_shmem_install_guard (void *begin, size_t size)
+{
+  struct sigaction sa;
+  memset (&sa, 0, sizeof (sa));
+  sa.sa_sigaction = caf_shmem_segv_handler;
+  sigemptyset (&sa.sa_mask);
+  sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+  if (sigaction (SIGSEGV, &sa, &caf_shmem_prev_sigsegv) != 0)
+    return -1;
+  caf_shmem_region_begin = begin;
+  caf_shmem_region_size = size;
+  caf_shmem_guard_active = 1;
+  return 0;
+}
+
+/* Restore the previously installed SIGSEGV handler.  */
+static void
+caf_shmem_restore_guard (void)
+{
+  if (!caf_shmem_guard_active)
+    return;
+  caf_shmem_guard_active = 0;
+  sigaction (SIGSEGV, &caf_shmem_prev_sigsegv, NULL);
+}
+
+/* Report the PR125113 condition as a clean runtime error.  */
+static void
+caf_shmem_report_bad_pointer (void)
+{
+  caf_runtime_error (
+    "pointer component of a coarray-derived type does not point into "
+    "shared-memory; pointer-assigning a non-coarray local target to it and "
+    "reading it from another image is undefined under the shared-memory "
+    "coarray runtime (compiler warning -Wcoarray-ptr-target, PR fortran/"
+    "125113)");
+}
+
+/* Run `getter` (one of the coindexed read accessors) inside the SIGSEGV
+   guard.  If the accessor dereferences a pointer that does not lie inside
+   the shared-memory region mapped at the same virtual address in every image
+   (the PR125113 situation, for example a data-pointer component associated
+   with a non-coarray local target), the guard intercepts the resulting fault
+   and calls caf_shmem_report_bad_pointer () instead of crashing.  On success
+   returns 0.  */
+static int
+caf_shmem_guarded_getter (getter_t getter, void *add_data,
+			  const int *image_index, void *dst_ptr,
+			  int32_t *free_buffer, void *src_ptr,
+			  caf_token_t cb_token, const size_t src_origins,
+			  size_t *opt_dst_charlen,
+			  const size_t *opt_src_charlen)
+{
+  if (!local || !local->sm.glbl.base)
+    return 0;
+  if (sigsetjmp (caf_shmem_segv_jmp, 1) != 0)
+    {
+      caf_shmem_restore_guard ();
+      caf_shmem_report_bad_pointer ();
+      return -1; /* caf_runtime_error exits, but keep analysis simple.  */
+    }
+  if (caf_shmem_install_guard (local->sm.glbl.base, local->sm.size) != 0)
+    return 0; /* Could not guard; run without the range check.  */
+  getter (add_data, image_index, dst_ptr, free_buffer, src_ptr, cb_token,
+	  src_origins, opt_dst_charlen, opt_src_charlen);
+  caf_shmem_restore_guard ();
+  return 0;
+}
 
 static struct accessor_hash_t *accessor_hash_table = NULL;
 static int aht_cap = 0;
@@ -1085,10 +1228,10 @@ _gfortran_caf_get_from_remote (
       opt_dst_desc->base_addr = NULL;
     }
 
-  accessor_hash_table[getter_index].u.getter (add_data, &image_index, dst_ptr,
-					      &free_buffer, src_ptr, &cb_token,
-					      0, opt_dst_charlen,
-					      opt_src_charlen);
+  caf_shmem_guarded_getter (
+    accessor_hash_table[getter_index].u.getter, add_data, &image_index,
+    dst_ptr, &free_buffer, src_ptr, &cb_token, 0, opt_dst_charlen,
+    opt_src_charlen);
   if (opt_dst_desc && old_dst_data_ptr && !may_realloc_dst
       && opt_dst_desc->base_addr != old_dst_data_ptr)
     {
@@ -1285,9 +1428,10 @@ _gfortran_caf_transfer_between_remotes (
       src_ptr = (void *) opt_src_desc;
     }
 
-  accessor_hash_table[src_access_index].u.getter (
-    src_add_data, &src_image_index, transfer_ptr, &free_buffer, src_ptr,
-    &cb_token, 0, opt_dst_charlen, opt_src_charlen);
+  caf_shmem_guarded_getter (
+    accessor_hash_table[src_access_index].u.getter, src_add_data,
+    &src_image_index, transfer_ptr, &free_buffer, src_ptr, &cb_token, 0,
+    opt_dst_charlen, opt_src_charlen);
 
   if (old_src_data_ptr)
     ((gfc_descriptor_t *) opt_src_desc)->base_addr = old_src_data_ptr;
