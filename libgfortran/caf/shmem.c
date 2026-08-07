@@ -99,19 +99,25 @@ struct accessor_hash_t
 
    A SIGSEGV can nevertheless be raised in another thread while the guard is
    installed, because signals are delivered to the process, not to the thread
-   that installed the guard.  The handler records which thread owns the
-   guard; a fault in any other thread is surfaced without disturbing the
+   that installed the guard.  The handler runs in the context of whichever
+   thread faulted; while an accessor runs, only its own thread has
+   caf_shmem_guard_in_this_thread set, so that thread-local flag identifies
+   the owner.  A fault in any other thread is surfaced without disturbing the
    owner's still-active guard (see caf_shmem_segv_handler).  */
 
 #if defined(HAVE_SIGACTION) && defined(SA_SIGINFO)
-
-#include <pthread.h>
 
 static sigjmp_buf caf_shmem_segv_jmp;
 static volatile sig_atomic_t caf_shmem_guard_active = 0;
 static void *caf_shmem_region_begin = NULL;
 static size_t caf_shmem_region_size = 0;
-static pthread_t caf_shmem_guard_thread;
+/* Set in the thread that owns the active guard.  A SIGSEGV handler runs in
+   the context of the thread that faulted, so reading this thread-local flag
+   from the handler immediately tells us whether the faulting thread is the
+   one that installed the guard, without any pthread calls (pthread_self()
+   and pthread_equal() are not async-signal-safe and must not be used in a
+   signal handler).  */
+static __thread int caf_shmem_guard_in_this_thread;
 static struct sigaction caf_shmem_prev_sigsegv;
 static caf_shmem_mutex caf_shmem_guard_mutex = CAF_SHMEM_MUTEX_INITIALIZER;
 
@@ -122,12 +128,14 @@ static void caf_shmem_restore_guard (void);
 static void caf_shmem_report_bad_pointer (void);
 
 /* SIGSEGV handler used while an accessor runs.  It only intercepts faults of
-   the thread that installed the guard (caf_shmem_guard_thread).  If that
-   thread faults on an address outside the shared-memory region, the pointer
-   that was dereferenced cannot be valid in this process, i.e. it is the
-   PR125113 situation: we longjmp back to the accessor invocation site, which
-   then reports the error.  The owner's own in-region faults are re-dispatched
-   to the previously installed disposition.
+   the thread that installed the guard (the thread whose
+   caf_shmem_guard_in_this_thread flag is set; the handler runs in the
+   context of the faulting thread so the flag directly identifies it).  If
+   that thread faults on an address outside the shared-memory region, the
+   pointer that was dereferenced cannot be valid in this process, i.e. it is
+   the PR125113 situation: we longjmp back to the accessor invocation site,
+   which then reports the error.  The owner's own in-region faults are
+   re-dispatched to the previously installed disposition.
 
    A fault raised in any other thread while a guard is active is not the
    PR125113 situation and *must not* uninstall the disposition, because the
@@ -144,10 +152,11 @@ caf_shmem_segv_handler (int sig, siginfo_t *info, void *ucontext)
 {
   (void) info;
   (void) ucontext;
-  bool guarded_thread = false;
-  if (caf_shmem_guard_active
-      && pthread_equal (caf_shmem_guard_thread, pthread_self ()))
-    guarded_thread = true;
+  /* The handler runs on the stack of the thread that faulted, so this
+     thread-local flag is set exactly when the faulting thread is the one
+     that installed the guard.  Reading it is just a memory access and is
+     async-signal-safe, unlike pthread_self()/pthread_equal().  */
+  bool guarded_thread = caf_shmem_guard_in_this_thread != 0;
 
   bool is_bad_ptr = false;
   if (guarded_thread && sig == SIGSEGV)
@@ -217,7 +226,11 @@ caf_shmem_install_guard (void *begin, size_t size)
   sa.sa_flags = SA_SIGINFO | SA_NODEFER;
   caf_shmem_region_begin = begin;
   caf_shmem_region_size = size;
-  caf_shmem_guard_thread = pthread_self ();
+  /* Mark this thread as the guard owner before publishing the guard so the
+     handler can identify the faulting thread from its own thread-local flag
+     instead of calling pthread_self()/pthread_equal() (which are not
+     async-signal-safe).  */
+  caf_shmem_guard_in_this_thread = 1;
   /* Publish the guard state before installing the handler so the handler is
      never entered with inconsistent state.  */
   caf_shmem_guard_active = 1;
@@ -238,6 +251,7 @@ caf_shmem_restore_guard (void)
     return;
   sigaction (SIGSEGV, &caf_shmem_prev_sigsegv, NULL);
   caf_shmem_guard_active = 0;
+  caf_shmem_guard_in_this_thread = 0;
 }
 
 /* Report the PR125113 condition as a clean runtime error.  */

@@ -1,6 +1,14 @@
 2026-08-07  Anonymous User  <anon@example.com>
 
 	PR fortran/125113
+	* caf/shmem.c: Identify the guarded thread in the SIGSEGV handler
+	with a thread-local flag instead of pthread_self()/pthread_equal(),
+	which are not async-signal-safe and must not be called from a signal
+	handler.
+
+2026-08-07  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
 	* caf/shmem.c: Make the read-guard state process-wide to match the
 	process-wide SIGSEGV disposition.  Serialize guard installation and
 	restoration with a process-wide mutex held for the duration of each
