@@ -1,3 +1,12 @@
+2026-08-06  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
+	* expr.cc (gfc_check_pointer_assign): When -fcoarray=lib is in
+	effect, warn (-Wcoarray-ptr-target) if a data-pointer component
+	of a coarray-derived-type object is associated with a
+	non-coarray local target, which cannot be reached from a remote
+	image under the shared-memory coarray runtime.
+
 2026-07-28  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
 
 	PR fortran/125866

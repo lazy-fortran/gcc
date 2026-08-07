@@ -4943,6 +4943,43 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
 		     "pointer target", &lvalue->where);
     }
 
+  /* Under shared-memory (shmem) coarray libraries, all coarrays and
+     everything reachable from them must live in a shared-memory region that
+     every image maps at the same virtual address.  A data-pointer component
+     of a coarray-derived-type object that is associated with a non-coarray
+     local target points into the associating image's private heap; a remote
+     image dereferencing that pointer in its own address space then faults
+     (cf. PR fortran/125113).  Warn for the statically obvious cases.  */
+  if (flag_coarray == GFC_FCOARRAY_LIB && !proc_pointer
+      && rvalue->expr_type == EXPR_VARIABLE
+      && !gfc_is_coindexed (rvalue))
+    {
+      bool lhs_coarray = lvalue->symtree->n.sym->attr.codimension != 0;
+      bool lhs_ptr_comp = false;
+      for (ref = lvalue->ref; ref; ref = ref->next)
+	{
+	  if (ref->type == REF_ARRAY && ref->u.ar.codimen != 0)
+	    lhs_coarray = true;
+	  else if (ref->type == REF_COMPONENT)
+	    {
+	      if (ref->u.c.component->attr.codimension != 0)
+		lhs_coarray = true;
+	      if (ref->u.c.component->attr.pointer
+		  && !ref->u.c.component->attr.proc_pointer)
+		lhs_ptr_comp = true;
+	    }
+	}
+
+      if (lhs_coarray && lhs_ptr_comp
+	  && rvalue->symtree->n.sym->attr.codimension == 0
+	  && !gfc_expr_attr (rvalue).pointer)
+	gfc_warning (OPT_Wcoarray_ptr_target,
+		     "Pointer component of a coarray at %L is associated with "
+		     "a non-coarray local target; reading it from another "
+		     "image is undefined and may crash with shared-memory "
+		     "coarray libraries", &lvalue->where);
+    }
+
   return true;
 }
 

@@ -4006,6 +4006,22 @@ of such a type
 @chapter Coarray Programming
 @cindex Coarrays
 
+The single-image and thread-based coarray runtimes keep all coarray data in
+the image's own address space, and coindexed accesses are forwarded to the
+image that owns the data.  The shared-memory multi-process runtime
+(@option{libcaf_shmem}) instead maps the whole coarray region at the same
+virtual address in every image and evaluates coindexed read accessors in the
+caller's process.  All data of a coarray-derived type, including the targets
+of its allocatable components, is therefore allocated inside the shared-memory
+region so that pointers into it remain valid on every image.  A
+@code{pointer} component of a coarray-derived type that is associated with a
+non-coarray local target (an ordinary variable or allocatable) points into
+the associating image's private heap, which is not mapped into the other
+images; reading such a component from a remote image is undefined behaviour
+and crashes with the shared-memory coarray runtime.  The compiler warns about
+the statically detectable occurrences of this construct with the
+@option{-Wcoarray-ptr-target} option (implied by @option{-Wall}).
+
 @menu
 * Type and enum ABI Documentation::
 * Function ABI Documentation::

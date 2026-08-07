@@ -225,6 +225,11 @@ Wcharacter-truncation
 Fortran Var(warn_character_truncation) Warning LangEnabledBy(Fortran,Wall)
 Warn about truncated character expressions.
 
+Wcoarray-ptr-target
+Fortran Warning Var(warn_coarray_ptr_target) LangEnabledBy(Fortran,Wall)
+Warn when a data-pointer component of a coarray-derived type is associated
+with a non-coarray local target, which cannot be reached from a remote image.
+
 Wcompare-reals
 Fortran Warning Var(warn_compare_reals) LangEnabledBy(Fortran,Wextra)
 Warn about equality comparisons involving REAL or COMPLEX expressions.

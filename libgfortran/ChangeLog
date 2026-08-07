@@ -1,3 +1,34 @@
+2026-08-07  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
+	* caf/shmem.c: Identify the guarded thread in the SIGSEGV handler
+	with a thread-local flag instead of pthread_self()/pthread_equal(),
+	which are not async-signal-safe and must not be called from a signal
+	handler.
+
+2026-08-07  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
+	* caf/shmem.c: Make the read-guard state process-wide to match the
+	process-wide SIGSEGV disposition.  Serialize guard installation and
+	restoration with a process-wide mutex held for the duration of each
+	guarded accessor, and record the thread that owns the active guard.
+	When a fault is raised in a thread that does not own the guard,
+	force the default disposition and re-raise so the process terminates
+	instead of disarming the owner's still-active guard (which would let
+	a later bad pointer bypass the check).  Restore the saved disposition
+	even when a bad pointer is intercepted, so the handler is not left
+	installed with stale inactive state.
+
+2026-08-06  Anonymous User  <anon@example.com>
+
+	PR fortran/125113
+	* caf/shmem.c: Guard coindexed read accessors with a SIGSEGV
+	range check.  If an accessor dereferences a pointer that does not
+	lie inside the shared-memory region (e.g. a data-pointer component
+	associated with a non-coarray local target), report a clean runtime
+	error instead of crashing.
+
 2026-07-26  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
 
 	* intrinsics/reduce.c (reduce): Fix the mask_present.
