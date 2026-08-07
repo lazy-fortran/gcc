@@ -269,6 +269,14 @@ caf_shmem_guarded_getter (getter_t getter, void *add_data,
 {
   if (!local || !local->sm.glbl.base)
     return 0;
+  /* Establish the jump target only after acquiring the guard mutex.  The
+     sigjmp_buf is a single process-wide slot, so if a blocked thread set it
+     while another thread owned the guard, a later siglongjmp in the owner
+     would jump into the waiting thread's saved context (undefined
+     behavior).  Acquiring first guarantees at most the mutex owner has set
+     the jump buffer: only that thread can fault and longjmp while holding
+     the mutex, and a waiting thread has not yet executed sigsetjmp.  */
+  caf_shmem_mutex_lock (&caf_shmem_guard_mutex);
   if (sigsetjmp (caf_shmem_segv_jmp, 1) != 0)
     {
       /* The handler longjmp'd back here; restore the signal disposition and
@@ -278,7 +286,6 @@ caf_shmem_guarded_getter (getter_t getter, void *add_data,
       caf_shmem_report_bad_pointer ();
       return -1; /* caf_runtime_error exits, but keep analysis simple.  */
     }
-  caf_shmem_mutex_lock (&caf_shmem_guard_mutex);
   if (caf_shmem_install_guard (local->sm.glbl.base, local->sm.size) != 0)
     {
       caf_shmem_mutex_unlock (&caf_shmem_guard_mutex);
