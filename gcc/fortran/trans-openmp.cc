@@ -4706,9 +4706,21 @@ gfc_trans_omp_clauses (stmtblock_t *block, gfc_omp_clauses *clauses,
 			  OMP_CLAUSE_SIZE (node) = size_zero_node;
 			  goto finalize_map_clause;
 			}
-		      /* For descriptor types, the unmapping happens below.  */
-		      if (op != EXEC_OMP_TARGET_EXIT_DATA
-			  || !GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (decl)))
+		      /* For descriptor types, the unmapping happens below.
+			 For ENTER/EXIT DATA on pass-by-reference scalars
+			 that are not actual POINTER/ALLOCATABLE, skip the
+			 pointer mapping - it would incorrectly map the
+			 local reference slot instead of the data.  */
+		      if ((op != EXEC_OMP_TARGET_EXIT_DATA
+			   && op != EXEC_OMP_TARGET_ENTER_DATA
+			   && op != EXEC_OACC_ENTER_DATA
+			   && op != EXEC_OACC_EXIT_DATA)
+			  || (!GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (decl))
+			      && (GFC_DECL_GET_SCALAR_POINTER (decl)
+				  || GFC_DECL_GET_SCALAR_ALLOCATABLE (decl)
+				  || GFC_DECL_CRAY_POINTEE (decl)
+				  || pointer
+				  || allocatable)))
 			{
 			  enum gomp_map_kind gmk = GOMP_MAP_POINTER;
 			  if (op == EXEC_OMP_TARGET_EXIT_DATA
@@ -9705,7 +9717,7 @@ gfc_trans_omp_target_enter_data (gfc_code *code)
 
   gfc_start_block (&block);
   omp_clauses = gfc_trans_omp_clauses (&block, code->ext.omp_clauses,
-				       code->loc);
+				       code->loc, false, false, code->op);
   stmt = build1_loc (input_location, OMP_TARGET_ENTER_DATA, void_type_node,
 		     omp_clauses);
   gfc_add_expr_to_block (&block, stmt);
