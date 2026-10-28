@@ -4170,6 +4170,7 @@ gfc_compare_actual_formal (gfc_actual_arglist **ap, gfc_formal_arglist *formal,
 	  && a->expr->ts.type == BT_VOID
 	  && a->expr->symtree->n.sym
 	  && a->expr->symtree->n.sym->from_intmod == INTMOD_ISO_C_BINDING
+	  && !f->sym->attr.artificial
 	  && (f->sym->ts.type != BT_DERIVED
 	      || f->sym->ts.u.derived->from_intmod != INTMOD_ISO_C_BINDING
 	      || !((a->expr->symtree->n.sym->intmod_sym_id == ISOCBINDING_FUNLOC
