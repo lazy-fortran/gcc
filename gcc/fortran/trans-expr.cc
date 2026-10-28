@@ -13133,7 +13133,9 @@ static void
 alloc_scalar_allocatable_for_assignment (stmtblock_t *block,
 					 tree string_length,
 					 gfc_expr *expr1,
-					 gfc_expr *expr2)
+					 gfc_expr *expr2,
+					 tree lhs_expr,
+					 tree lhs_string_length)
 
 {
   tree cond;
@@ -13157,11 +13159,17 @@ alloc_scalar_allocatable_for_assignment (stmtblock_t *block,
 
   realloc_lhs_warning (expr2->ts.type, false, &expr2->where);
 
-  /* Since this is a scalar lhs, we can afford to do this.  That is,
-     there is no risk of side effects being repeated.  */
   gfc_init_se (&lse, NULL);
-  lse.want_pointer = 1;
-  gfc_conv_expr (&lse, expr1);
+  if (lhs_expr)
+    {
+      lse.expr = lhs_expr;
+      lse.string_length = lhs_string_length;
+    }
+  else
+    {
+      lse.want_pointer = 1;
+      gfc_conv_expr (&lse, expr1);
+    }
 
   jump_label1 = gfc_build_label_decl (NULL_TREE);
   jump_label2 = gfc_build_label_decl (NULL_TREE);
@@ -14057,6 +14065,12 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
       if (lss == gfc_ss_terminator)
 	{
 	  gfc_add_block_to_block (&block, &rse.pre);
+	  /* For a scalar derived type, the finalizer reuses the evaluated
+	     lhs, so its evaluation must come first.  When finalization is
+	     skipped below, lse.pre stays in place and is emitted with the
+	     assignment.  */
+	  if (expr1->rank == 0 && expr1->ts.type == BT_DERIVED)
+	    gfc_add_block_to_block (&block, &lse.pre);
 	  gfc_add_block_to_block (&block, &lse.finalblock);
 	}
       else
@@ -14081,6 +14095,16 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
   /* If nothing else works, do it the old fashioned way!  */
   if (tmp == NULL_TREE)
     {
+      /* F2003: Allocate or reallocate a scalar lhs after its designator has
+	 been evaluated and finalized.  */
+      if (final_expr && flag_realloc_lhs
+	  && is_scalar_reallocatable_lhs (expr1) && !is_poly_assign)
+	alloc_scalar_allocatable_for_assignment
+	  (&lse.pre, string_length, expr1, expr2,
+	   POINTER_TYPE_P (TREE_TYPE (lse.expr))
+	     ? lse.expr : gfc_build_addr_expr (NULL_TREE, lse.expr),
+	   lse.string_length);
+
       /* Strip parentheses to detect cases like a = (a) which need deep_copy.  */
       gfc_expr *expr2_stripped = strip_parentheses (expr2);
       tmp
@@ -14113,11 +14137,12 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
 
   if (lss == gfc_ss_terminator)
     {
-      /* F2003: Add the code for reallocation on assignment.  */
-      if (flag_realloc_lhs && is_scalar_reallocatable_lhs (expr1)
-	  && !is_poly_assign)
-	alloc_scalar_allocatable_for_assignment (&block, string_length,
-						 expr1, expr2);
+      /* F2003: Add the code for reallocation on assignment.  Finalizable
+	 scalar derived types reuse the evaluated lhs above.  */
+      if (!final_expr && flag_realloc_lhs
+	  && is_scalar_reallocatable_lhs (expr1) && !is_poly_assign)
+	alloc_scalar_allocatable_for_assignment
+	  (&block, string_length, expr1, expr2, NULL_TREE, NULL_TREE);
 
       /* Use the scalar assignment as is.  */
       gfc_add_block_to_block (&block, &body);
