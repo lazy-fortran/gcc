@@ -17,8 +17,8 @@ contains
     do k=1,10
        call random_number(a)
        call random_number(b)
-       u = uint(a*2**32)
-       v = uint(b*2**32)
+       u = uint(a*2.0_8**32)
+       v = uint(b*2.0_8**32)
        i = int(u,8)
        j = int(v,8)
        res_u = dot_product(u,v)
