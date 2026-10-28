@@ -854,7 +854,7 @@ case ${target} in
   c_target_objs="${c_target_objs} darwin-c.o"
   cxx_target_objs="${cxx_target_objs} darwin-c.o"
   d_target_objs="${d_target_objs} darwin-d.o"
-  fortran_target_objs="darwin-f.o"
+  fortran_target_objs="${fortran_target_objs} darwin-f.o"
   rust_target_objs="${rust_target_objs} darwin-rust.o"
   target_has_targetcm=yes
   target_has_targetdm=yes
