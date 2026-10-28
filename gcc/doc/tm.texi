@@ -709,6 +709,18 @@ macro to define @code{__ELF__}, so you probably do not need to define
 it yourself.
 @end defmac
 
+@defmac TARGET_GENERIC_CPU_CPP_BUILTINS (@var{pfile})
+Optional language-neutral variant of @code{TARGET_CPU_CPP_BUILTINS} for
+frontends (such as Fortran) that cannot link the C-family support code.
+Takes a @code{cpp_reader *} argument and must not depend on
+@code{parse_in}, @code{flag_iso}, @code{c_dialect_cxx}, or any other
+C-family machinery.  On targets that define it, the same preprocessor
+macros are available under @option{-cpp} in Fortran as under the C
+preprocessor, modulo language-specific macros such as
+@code{__STDCPP_FLOAT16_T__}.  See @file{config/i386/i386-cppbuiltin.cc}
+for the x86 implementation.
+@end defmac
+
 @deftypevar {extern int} target_flags
 This variable is declared in @file{options.h}, which is included before
 any target-specific headers.

@@ -157,6 +157,75 @@ void pp_dir_change (cpp_reader *, const char *);
 static int dump_macro (cpp_reader *, cpp_hashnode *, void *);
 static void dump_queued_macros (cpp_reader *);
 
+/* Fortran-local helpers that mirror builtin_define_std,
+   builtin_define_with_value, and builtin_define_with_int_value from
+   c-family/c-cppbuiltin.cc.  Those functions use the C-family-only
+   globals parse_in and flag_iso, so they cannot be called directly
+   from the Fortran frontend.  */
+
+/* Given "unix", define __unix, __unix__, and (if DEFINE_USER) unix.  */
+
+static void
+gfc_builtin_define_std (cpp_reader *pfile, const char *macro,
+			bool define_user)
+{
+  size_t len = strlen (macro);
+  char *buff = (char *) alloca (len + 5);
+  char *p = buff + 2;
+  char *q = p + len;
+
+  memcpy (p, macro, len + 1);
+  if (!(*p == '_' && (p[1] == '_' || ISUPPER (p[1]))))
+    {
+      if (*p != '_')
+	*--p = '_';
+      if (p[1] != '_')
+	*--p = '_';
+    }
+  cpp_define (pfile, p);
+
+  if (p != buff + 2)
+    {
+      if (q[-1] != '_')
+	*q++ = '_';
+      if (q[-2] != '_')
+	*q++ = '_';
+      *q = '\0';
+      cpp_define (pfile, p);
+      if (define_user)
+	cpp_define (pfile, macro);
+    }
+}
+
+/* Define MACRO to EXPANSION; if IS_STR, quote the expansion.  */
+
+static void
+gfc_builtin_define_with_value (cpp_reader *pfile, const char *macro,
+			       const char *expansion, int is_str)
+{
+  size_t mlen = strlen (macro);
+  size_t elen = strlen (expansion);
+  char *buf = (char *) alloca (mlen + elen + 4);
+  if (is_str)
+    sprintf (buf, "%s=\"%s\"", macro, expansion);
+  else
+    sprintf (buf, "%s=%s", macro, expansion);
+  cpp_define (pfile, buf);
+}
+
+/* Provide essential Darwin platform macros for the Fortran preprocessor.
+   The full darwin_cpp_builtins() in darwin-c.cc also defines
+   __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ and
+   __CONSTANT_CFSTRINGS__, but those depend on functions only linked
+   into C-family frontends.  */
+
+static void ATTRIBUTE_UNUSED
+gfc_darwin_cpp_builtins (cpp_reader *pfile)
+{
+  cpp_define (pfile, "__MACH__");
+  cpp_define (pfile, "__APPLE__");
+  gfc_builtin_define_with_value (pfile, "__APPLE_CC__", "1", false);
+}
 
 static void
 cpp_define_builtins (cpp_reader *pfile)
@@ -177,33 +246,59 @@ cpp_define_builtins (cpp_reader *pfile)
   if (flag_openmp)
     cpp_define (pfile, "_OPENMP=202111");
 
-  /* The defines below are necessary for the TARGET_* macros.
-
-     FIXME:  Note that builtin_define_std() actually is a function
-     in c-cppbuiltin.cc which uses flags undefined for Fortran.
-     Let's skip this for now. If needed, one needs to look into it
-     once more.  */
+  /* Wrapper macros for C-family identifiers used in target config
+     headers.  These allow TARGET_OS_CPP_BUILTINS and
+     TARGET_OBJFMT_CPP_BUILTINS to compile in the Fortran frontend.  */
 
 # define builtin_define(TXT) cpp_define (pfile, TXT)
-# define builtin_define_std(TXT)
+# define builtin_define_std(TXT) gfc_builtin_define_std (pfile, TXT, !flag_iso)
+# define builtin_define_with_value(MACRO, EXPANSION, IS_STR) \
+  gfc_builtin_define_with_value (pfile, MACRO, EXPANSION, IS_STR)
+# define builtin_define_with_int_value(MACRO, VALUE) \
+  cpp_define_formatted (pfile, "%s=" HOST_WIDE_INT_PRINT_DEC, \
+			MACRO, (HOST_WIDE_INT) (VALUE))
 # define builtin_assert(TXT) cpp_assert (pfile, TXT)
+# define c_dialect_cxx() 0
+# define c_dialect_objc() 0
+# define preprocessing_asm_p() 0
+# define preprocessing_trad_p() 0
+  /* Fortran has no -std=cNN flag to control this.  Set to 1 (ISO mode)
+     so that builtin_define_std() only defines reserved-namespace macros
+     like __unix__ and __linux__, not bare "unix" or "linux" which are
+     valid Fortran identifiers and would cause silent replacement.  */
+# define flag_iso 1
+# define flag_isoc94 0
+# define flag_isoc99 0
+# define flag_isoc11 0
+# define flag_isoc23 0
+# define darwin_cpp_builtins(PFILE) gfc_darwin_cpp_builtins (PFILE)
 
-  /* FIXME: Pandora's Box
-    Using the macros below results in multiple breakages:
-     - mingw will fail to compile this file as dependent macros
-       assume to be used in c-cppbuiltin.cc only. Further, they use
-       flags only valid/defined in C (same as noted above).
-       [config/i386/mingw32.h, config/i386/cygming.h]
-     - other platforms (not as popular) break similarly
-       [grep for 'builtin_define_with_int_value' in gcc/config/]
-
-  TARGET_CPU_CPP_BUILTINS ();
   TARGET_OS_CPP_BUILTINS ();
-  TARGET_OBJFMT_CPP_BUILTINS (); */
+  TARGET_OBJFMT_CPP_BUILTINS ();
+
+  /* Language-neutral target CPU builtins.  A target that wants to expose
+     preprocessor macros to frontends other than C/C++ defines this macro in
+     its tm.h to call its CPU-builtin implementation with PFILE.  The x86
+     implementation lives in gcc/config/i386/i386-cppbuiltin.cc.  */
+#ifdef TARGET_GENERIC_CPU_CPP_BUILTINS
+  TARGET_GENERIC_CPU_CPP_BUILTINS (pfile);
+#endif
 
 #undef builtin_define
 #undef builtin_define_std
+#undef builtin_define_with_value
+#undef builtin_define_with_int_value
 #undef builtin_assert
+#undef c_dialect_cxx
+#undef c_dialect_objc
+#undef preprocessing_asm_p
+#undef preprocessing_trad_p
+#undef flag_iso
+#undef flag_isoc94
+#undef flag_isoc99
+#undef flag_isoc11
+#undef flag_isoc23
+#undef darwin_cpp_builtins
 }
 
 bool

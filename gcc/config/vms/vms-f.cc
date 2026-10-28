@@ -23,6 +23,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "memmodel.h"
+#include "tm_p.h"
 
 void
 vms_c_register_includes (const char *sysroot ATTRIBUTE_UNUSED,
@@ -30,4 +32,20 @@ vms_c_register_includes (const char *sysroot ATTRIBUTE_UNUSED,
 			 int stdinc ATTRIBUTE_UNUSED)
 {
   /* No-op for fortran.  */
+}
+
+/* TARGET_OS_CPP_BUILTINS in vms.h uses these to define __CRTL_VER and
+   __VMS_VER.  The Fortran preprocessor expands that hook too, so provide
+   the same defaults as vms-c.cc.  */
+
+int
+vms_c_get_crtl_ver (void)
+{
+  return VMS_DEFAULT_CRTL_VER;
+}
+
+int
+vms_c_get_vms_ver (void)
+{
+  return VMS_DEFAULT_VMS_VER;
 }
