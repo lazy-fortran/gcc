@@ -1589,9 +1589,6 @@ gfc_assignment_finalizer_call (gfc_se *lse, gfc_expr *expr1, bool init_flag)
   if (!finalizable)
     return false;
 
-  if (data_ref)
-    gfc_add_block_to_block (&lse->finalblock, &lse->pre);
-
   lhs_attr = gfc_expr_attr (expr1);
 
   /* Check allocatable/pointer is allocated/associated.  */

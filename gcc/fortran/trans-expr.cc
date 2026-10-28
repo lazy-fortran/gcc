@@ -14065,6 +14065,12 @@ gfc_trans_assignment_1 (gfc_expr * expr1, gfc_expr * expr2, bool init_flag,
       if (lss == gfc_ss_terminator)
 	{
 	  gfc_add_block_to_block (&block, &rse.pre);
+	  /* For a scalar derived type, the finalizer reuses the evaluated
+	     lhs, so its evaluation must come first.  When finalization is
+	     skipped below, lse.pre stays in place and is emitted with the
+	     assignment.  */
+	  if (expr1->rank == 0 && expr1->ts.type == BT_DERIVED)
+	    gfc_add_block_to_block (&block, &lse.pre);
 	  gfc_add_block_to_block (&block, &lse.finalblock);
 	}
       else
