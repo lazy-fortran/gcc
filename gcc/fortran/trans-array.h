@@ -53,6 +53,7 @@ bool gfc_caf_is_dealloc_only (int);
 
 tree gfc_nullify_alloc_comp (gfc_symbol *, tree, int, int cm = 0);
 
+bool gfc_has_class_alloc_comp (gfc_symbol *);
 tree gfc_deallocate_alloc_comp (gfc_symbol *, tree, int, int cm = 0,
 				bool no_finalization = false);
 tree gfc_bcast_alloc_comp (gfc_symbol *, gfc_expr *, int, tree,

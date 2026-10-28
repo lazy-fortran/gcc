@@ -8472,6 +8472,7 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
       if (fsym && need_interface_mapping && e)
 	gfc_add_interface_mapping (&mapping, fsym, &parmse, e);
 
+      finalized = parmse.finalblock.head != NULL_TREE;
       gfc_add_block_to_block (&se->pre, &parmse.pre);
       gfc_add_block_to_block (&post, &parmse.post);
       gfc_add_block_to_block (&se->finalblock, &parmse.finalblock);
@@ -8586,8 +8587,9 @@ gfc_conv_procedure_call (gfc_se * se, gfc_symbol * sym,
 	      else if ((e->ts.type == BT_CLASS
 			&& GFC_CLASS_TYPE_P (TREE_TYPE (tmp)))
 		       || e->ts.type == BT_DERIVED)
-		tmp = gfc_deallocate_alloc_comp (e->ts.u.derived, tmp,
-						 parm_rank, 0, true);
+		tmp = gfc_deallocate_alloc_comp
+		  (e->ts.u.derived, tmp, parm_rank, 0,
+		   !gfc_has_class_alloc_comp (e->ts.u.derived));
 	      else if (e->ts.type == BT_CLASS)
 		tmp = gfc_deallocate_alloc_comp (CLASS_DATA (e)->ts.u.derived,
 						 tmp, parm_rank);
