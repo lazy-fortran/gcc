@@ -43,10 +43,14 @@
 /* Outline-atomics require LSE detection via __getauxval which is
    Linux-specific.  NetBSD does not build libgcc's t-lse, so the
    out-of-line helpers are absent.  Disable by default; the user
-   can still override with -moutline-atomics.  */
+   can still override with -moutline-atomics.  Functions that enable
+   outline atomics via #pragma GCC target or the target attribute
+   bypass this driver default and need the helpers at link time, just
+   like an explicit -moutline-atomics.  */
 #ifndef CC1_SPEC
 # define CC1_SPEC \
-  "%{!moutline-atomics:-mno-outline-atomics} " AARCH64_ERRATA_COMPILE_SPEC
+  "%{!moutline-atomics:%{!mno-outline-atomics:-mno-outline-atomics}} " \
+  AARCH64_ERRATA_COMPILE_SPEC
 #endif
 
 #ifndef CC1PLUS_SPEC
