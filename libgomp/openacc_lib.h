@@ -234,7 +234,7 @@
         end subroutine
 
         subroutine acc_copyin_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           end subroutine
       end interface
 
@@ -254,7 +254,7 @@
         end subroutine
 
         subroutine acc_present_or_copyin_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           end subroutine
       end interface
 
@@ -280,7 +280,7 @@
         end subroutine
 
         subroutine acc_create_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           end subroutine
       end interface
 
@@ -300,7 +300,7 @@
         end subroutine
 
         subroutine acc_present_or_create_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           end subroutine
       end interface
 
@@ -326,7 +326,7 @@
         end subroutine
 
         subroutine acc_copyout_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end subroutine
       end interface
 
@@ -346,7 +346,7 @@
         end subroutine
 
         subroutine acc_copyout_finalize_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end subroutine
       end interface
 
@@ -371,7 +371,7 @@
 
         subroutine acc_copyout_finalize_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -392,7 +392,7 @@
         end subroutine
 
         subroutine acc_delete_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end subroutine
       end interface
 
@@ -412,7 +412,7 @@
         end subroutine
 
         subroutine acc_delete_finalize_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end subroutine
       end interface
 
@@ -437,7 +437,7 @@
 
         subroutine acc_delete_finalize_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -458,7 +458,7 @@
         end subroutine
 
         subroutine acc_update_device_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end subroutine
       end interface
 
@@ -478,7 +478,7 @@
         end subroutine
 
         subroutine acc_update_self_array_h (a)
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end subroutine
       end interface
 
@@ -530,7 +530,7 @@
 
         function acc_is_present_array_h (a)
           logical acc_is_present_array_h
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
         end function
       end interface
 
@@ -625,7 +625,7 @@
 
         subroutine acc_copyin_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -651,7 +651,7 @@
 
         subroutine acc_create_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -677,7 +677,7 @@
 
         subroutine acc_copyout_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -703,7 +703,7 @@
 
         subroutine acc_delete_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -729,7 +729,7 @@
 
         subroutine acc_update_device_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
@@ -755,7 +755,7 @@
 
         subroutine acc_update_self_async_array_h (a, async_)
           import acc_handle_kind
-          type (*), dimension (..), contiguous :: a
+          type (*), dimension (..) :: a
           integer (acc_handle_kind) async_
         end subroutine
       end interface
