@@ -934,6 +934,20 @@ gfc_defer_symbol_init (gfc_symbol * sym)
 	  p = p->tlink;
 	}
     }
+  else if ((sym->as && sym->as->type == AS_EXPLICIT
+	    && !gfc_is_compile_time_shape (sym->as))
+	   || (sym->ts.type == BT_CHARACTER && sym->ts.u.cl
+	       && sym->ts.u.cl->length
+	       && !gfc_is_constant_expr (sym->ts.u.cl->length)))
+    {
+      /* Setup code is prepended, so keep automatic objects in reverse
+	 declaration order; their bounds may depend on earlier ones.  */
+      while (p && p != head && !p->attr.dummy && decl_order (p, sym))
+	{
+	  last = p;
+	  p = p->tlink;
+	}
+    }
   /* Insert in between last and p.  */
   last->tlink = sym;
   sym->tlink = p;
