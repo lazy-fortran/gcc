@@ -4484,6 +4484,8 @@ gfc_trans_omp_clauses (stmtblock_t *block, gfc_omp_clauses *clauses,
 	      tree node3 = NULL_TREE;
 	      tree node4 = NULL_TREE;
 	      tree node5 = NULL_TREE;
+	      auto_vec<tree> sibling_maps_before;
+	      auto_vec<tree> sibling_maps_after;
 
 	      /* OpenMP: automatically map pointer targets with the pointer;
 		 hence, always update the descriptor/pointer itself.  */
@@ -5337,10 +5339,129 @@ gfc_trans_omp_clauses (stmtblock_t *block, gfc_omp_clauses *clauses,
 	      else
 		sorry_at (gfc_get_location (&n->where), "unhandled expression");
 
+	      /* For enter/exit data on array components, also map/unmap
+		 scalar fields of the parent derived type.  The gimplifier
+		 groups these into a GOMP_MAP_STRUCT with unified reference
+		 counting.  */
+	      if ((op == EXEC_OACC_ENTER_DATA || op == EXEC_OMP_TARGET_ENTER_DATA
+		   || op == EXEC_OACC_EXIT_DATA || op == EXEC_OMP_TARGET_EXIT_DATA)
+		  && n->expr && n->expr->ref
+		  && lastref && lastref->type == REF_ARRAY)
+		{
+		  gfc_ref *parent_ref = NULL;
+		  gfc_ref *mapped_ref = NULL;
+
+		  /* Find the component ref before the array ref.  */
+		  for (gfc_ref *ref = n->expr->ref; ref; ref = ref->next)
+		    if (ref->type == REF_COMPONENT)
+		      {
+			parent_ref = mapped_ref;
+			mapped_ref = ref;
+		      }
+
+		  if (mapped_ref != NULL
+		      && mapped_ref->u.c.component->attr.allocatable)
+		    {
+		      gfc_symbol *parent_sym;
+		      tree base;
+
+		      if (parent_ref != NULL)
+			{
+			  /* Skip complex paths to the parent.  */
+			  bool unsupported_ref = false;
+			  for (gfc_ref *ref = n->expr->ref; ref != mapped_ref;
+			       ref = ref->next)
+			    if (ref->type == REF_ARRAY
+				|| (ref->type == REF_COMPONENT
+				    && ref->u.c.component->ts.type == BT_CLASS))
+			      {
+				unsupported_ref = true;
+				break;
+			      }
+			  if (unsupported_ref)
+			    goto finalize_map_clause;
+
+			  parent_sym = parent_ref->u.c.component->ts.u.derived;
+			  gfc_se base_se;
+			  gfc_init_se (&base_se, NULL);
+			  base_se.expr = gfc_maybe_dereference_var (n->sym, decl);
+			  for (gfc_ref *ref = n->expr->ref; ref != mapped_ref;
+			       ref = ref->next)
+			    if (ref->type == REF_COMPONENT)
+			      gfc_conv_component_ref (&base_se, ref);
+			  base = base_se.expr;
+			}
+		      else
+			{
+			  if (n->expr->ref->type == REF_ARRAY)
+			    goto finalize_map_clause;
+			  parent_sym = n->sym->ts.u.derived;
+			  base = gfc_maybe_dereference_var (n->sym, decl);
+			}
+
+		      if (parent_sym == NULL)
+			goto finalize_map_clause;
+
+		      bool is_exit = (op == EXEC_OACC_EXIT_DATA
+				      || op == EXEC_OMP_TARGET_EXIT_DATA);
+		      gomp_map_kind sibling_kind;
+		      if (is_exit)
+			sibling_kind
+			  = (OMP_CLAUSE_MAP_KIND (node) == GOMP_MAP_DELETE
+			     ? GOMP_MAP_DELETE : GOMP_MAP_RELEASE);
+		      else
+			sibling_kind
+			  = (GOMP_MAP_COPY_TO_P (OMP_CLAUSE_MAP_KIND (node))
+			     ? GOMP_MAP_TO : GOMP_MAP_ALLOC);
+
+		      gfc_component *mapped_comp = mapped_ref->u.c.component;
+		      bool before_mapped_comp = true;
+		      for (gfc_component *comp = parent_sym->components;
+			   comp; comp = comp->next)
+			{
+			  if (comp == mapped_comp)
+			    {
+			      before_mapped_comp = false;
+			      continue;
+			    }
+			  if (comp->attr.pointer || comp->attr.allocatable
+			      || comp->attr.dimension)
+			    continue;
+			  if (comp->ts.type != BT_INTEGER
+			      && comp->ts.type != BT_REAL
+			      && comp->ts.type != BT_LOGICAL
+			      && comp->ts.type != BT_COMPLEX
+			      && comp->ts.type != BT_CHARACTER)
+			    continue;
+
+			  if (comp->backend_decl == NULL_TREE)
+			    gfc_get_derived_type (parent_sym);
+			  if (comp->backend_decl == NULL_TREE)
+			    continue;
+
+			  tree field = comp->backend_decl;
+			  tree ftype = TREE_TYPE (field);
+			  tree cref = fold_build3_loc (input_location,
+						       COMPONENT_REF, ftype,
+						       base, field, NULL_TREE);
+			  tree c = build_omp_clause (map_loc, OMP_CLAUSE_MAP);
+			  OMP_CLAUSE_SET_MAP_KIND (c, sibling_kind);
+			  OMP_CLAUSE_DECL (c) = cref;
+			  OMP_CLAUSE_SIZE (c) = TYPE_SIZE_UNIT (ftype);
+			  (before_mapped_comp ? sibling_maps_before
+					      : sibling_maps_after).safe_push (c);
+			}
+		    }
+		}
+
 	      finalize_map_clause:
 
 	      if (!iterator)
 		gfc_add_block_to_block (block, &iter_block);
+
+	      for (unsigned i = sibling_maps_after.length (); i-- > 0;)
+		omp_clauses
+		  = gfc_trans_add_clause (sibling_maps_after[i], omp_clauses);
 
 	      omp_clauses = gfc_trans_add_clause (node, omp_clauses);
 	      if (node2)
@@ -5351,6 +5472,10 @@ gfc_trans_omp_clauses (stmtblock_t *block, gfc_omp_clauses *clauses,
 		omp_clauses = gfc_trans_add_clause (node4, omp_clauses);
 	      if (node5)
 		omp_clauses = gfc_trans_add_clause (node5, omp_clauses);
+
+	      for (unsigned i = sibling_maps_before.length (); i-- > 0;)
+		omp_clauses
+		  = gfc_trans_add_clause (sibling_maps_before[i], omp_clauses);
 	    }
 	  if (iterator)
 	    finish_iterator_group (list, &iter_block, tree_block,
@@ -9705,7 +9830,7 @@ gfc_trans_omp_target_enter_data (gfc_code *code)
 
   gfc_start_block (&block);
   omp_clauses = gfc_trans_omp_clauses (&block, code->ext.omp_clauses,
-				       code->loc);
+				       code->loc, false, false, code->op);
   stmt = build1_loc (input_location, OMP_TARGET_ENTER_DATA, void_type_node,
 		     omp_clauses);
   gfc_add_expr_to_block (&block, stmt);
