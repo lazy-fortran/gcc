@@ -25,6 +25,13 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 
 #include "auto-target.h"
 
+#ifdef __NetBSD__
+# include <stdio.h>
+# include <sys/types.h>
+# include <sys/sysctl.h>
+# include <machine/armreg.h>
+#endif
+
 /* Define the symbol gating the LSE implementations.  */
 _Bool __aarch64_have_lse_atomics
   __attribute__((visibility("hidden"), nocommon));
@@ -47,4 +54,33 @@ init_have_lse_atomics (void)
   __aarch64_have_lse_atomics = (hwcap & HWCAP_ATOMICS) != 0;
 }
 
-#endif /* __gnu_linux__  */
+#elif defined(__NetBSD__)
+
+/* Use a higher priority to ensure it runs before user constructors
+   and library constructors with priority 100.  */
+static void __attribute__((constructor (90)))
+init_have_lse_atomics (void)
+{
+  unsigned int ncpu = 0;
+  size_t len = sizeof (ncpu);
+
+  if (sysctlbyname ("hw.ncpu", &ncpu, &len, 0, 0) != 0 || ncpu == 0)
+    return;
+
+  for (unsigned int cpu = 0; cpu < ncpu; ++cpu)
+    {
+      char name[sizeof ("machdep.cpu4294967295.cpu_id")];
+      struct aarch64_sysctl_cpu_id id;
+
+      snprintf (name, sizeof (name), "machdep.cpu%u.cpu_id", cpu);
+      len = sizeof (id);
+      if (sysctlbyname (name, &id, &len, 0, 0) != 0
+	  || __SHIFTOUT (id.ac_aa64isar0, ID_AA64ISAR0_EL1_ATOMIC)
+	     < ID_AA64ISAR0_EL1_ATOMIC_SWP)
+	return;
+    }
+
+  __aarch64_have_lse_atomics = 1;
+}
+
+#endif
