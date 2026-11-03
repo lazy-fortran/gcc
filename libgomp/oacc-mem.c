@@ -1284,10 +1284,35 @@ goacc_enter_data_internal (struct gomp_device_descr *acc_dev, size_t mapnum,
 
 	  gomp_mutex_lock (&acc_dev->lock);
 
+	  /* For a group led by GOMP_MAP_TO_PSET, 'gomp_map_vars_internal'
+	     points every following in-descriptor GOMP_MAP_POINTER entry at
+	     the descriptor key and, as no refcount set is used for OpenACC,
+	     increments its structured refcount once per such entry.  Exit
+	     data releases the descriptor key only once, via the TO_PSET
+	     entry.  So count the descriptor key once here: bump its dynamic
+	     refcount for the TO_PSET entry only, and cancel the structured
+	     refcount increment for each further entry that refers to it.
+	     This leaves refcount == dynamic_refcount == 1 for the key,
+	     however many in-descriptor pointers the group has, and also
+	     catches repeats that are not adjacent.  */
+	  splay_tree_key pset_key = NULL;
+	  if ((kinds[i] & 0xff) == GOMP_MAP_TO_PSET && tgt->list_count > 0)
+	    pset_key = tgt->list[0].key;
 	  for (size_t j = 0; j < tgt->list_count; j++)
 	    {
 	      n = tgt->list[j].key;
-	      if (n && !tgt->list[j].is_attach)
+	      if (n == NULL || tgt->list[j].is_attach)
+		continue;
+	      if (j > 0 && n == pset_key)
+		{
+		  if (n->refcount != REFCOUNT_INFINITY
+		      && n->refcount != REFCOUNT_ACC_MAP_DATA)
+		    {
+		      assert (n->refcount > 1);
+		      n->refcount--;
+		    }
+		}
+	      else
 		n->dynamic_refcount++;
 	    }
 	}
