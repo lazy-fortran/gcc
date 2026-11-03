@@ -23,9 +23,10 @@ contains
     if (any(uint(k) /= w)) error stop 1
   end subroutine test1
   subroutine test2
-    unsigned, parameter :: u(3,3) = reshape ([1u, uint(-2), 3u, uint(-4), &
-         5u, uint(-6), 7u, uint(-8), 9u],[3,3])
-    unsigned, parameter :: v(3,3) = 1u - u
+    unsigned, parameter :: u(3,3) = reshape ([70001u, 70002u, 70003u, &
+         70004u, 70005u, 70006u, 70007u, 70008u, 70009u], [3,3])
+    unsigned, parameter :: v(3,3) = reshape ([80001u, 80002u, 80003u, &
+         80004u, 80005u, 80006u, 80007u, 80008u, 80009u], [3,3])
     unsigned, parameter :: w(3,3) = matmul(u,v)
     integer(kind=8), dimension(3,3), parameter :: &
          i = int(u,8), j = int(v,8)

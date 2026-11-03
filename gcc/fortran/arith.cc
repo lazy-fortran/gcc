@@ -1970,7 +1970,12 @@ eval_intrinsic (gfc_intrinsic_op op,
 
   if (rc != ARITH_OK)
     {
-      gfc_error (gfc_arith_error (rc), &op1->where);
+      if (rc == ARITH_OVERFLOW
+	  && flag_range_check
+	  && op1->ts.type != BT_UNSIGNED)
+	gfc_error_now (gfc_arith_error (rc), &op1->where);
+      else
+	gfc_error (gfc_arith_error (rc), &op1->where);
       if (rc == ARITH_OVERFLOW)
 	goto done;
 
