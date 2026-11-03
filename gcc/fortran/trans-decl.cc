@@ -888,6 +888,19 @@ decl_order (gfc_symbol *sym1, gfc_symbol *sym2)
 }
 
 
+/* Return true if SYM has non-constant bounds or character length.  */
+
+static bool
+automatic_object_p (gfc_symbol *sym)
+{
+  return ((sym->as && sym->as->type == AS_EXPLICIT
+	   && !gfc_is_compile_time_shape (sym->as))
+	  || (sym->ts.type == BT_CHARACTER && sym->ts.u.cl
+	      && sym->ts.u.cl->length
+	      && !gfc_is_constant_expr (sym->ts.u.cl->length)));
+}
+
+
 /* Remember a symbol to generate initialization/cleanup code at function
    entry/exit.  */
 
@@ -934,15 +947,12 @@ gfc_defer_symbol_init (gfc_symbol * sym)
 	  p = p->tlink;
 	}
     }
-  else if ((sym->as && sym->as->type == AS_EXPLICIT
-	    && !gfc_is_compile_time_shape (sym->as))
-	   || (sym->ts.type == BT_CHARACTER && sym->ts.u.cl
-	       && sym->ts.u.cl->length
-	       && !gfc_is_constant_expr (sym->ts.u.cl->length)))
+  else if (automatic_object_p (sym))
     {
       /* Setup code is prepended, so keep automatic objects in reverse
 	 declaration order; their bounds may depend on earlier ones.  */
-      while (p && p != head && !p->attr.dummy && decl_order (p, sym))
+      while (p && p != head && !p->attr.dummy
+	     && (!automatic_object_p (p) || decl_order (p, sym)))
 	{
 	  last = p;
 	  p = p->tlink;

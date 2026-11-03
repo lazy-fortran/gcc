@@ -31,9 +31,28 @@ contains
       x = 1.0
     end subroutine
   end subroutine
+
+  ! A fixed-shape array referenced from the contained procedure between
+  ! the dependent and the independent automatic object.
+  subroutine t (k)
+    integer, intent(in) :: k
+    real :: g(3)
+    integer :: v(k + 0*size (g))
+    logical :: l(size (v))
+    call touch ()
+    if (size (v) /= k) stop 8
+    if (size (l) /= k) stop 9
+    if (.not. all (l) .or. any (g /= 3.0)) stop 10
+  contains
+    subroutine touch ()
+      l = .true.
+      g = 3.0
+    end subroutine
+  end subroutine
 end module
 
   use m
   call s (4)
   call s (1)
+  call t (5)
 end
